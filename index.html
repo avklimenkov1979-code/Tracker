@@ -7,6 +7,8 @@
 <title>Мой трек</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 :root{
   --bg:#EDF0F3; --paper:#FFFFFF; --ink:#16212C; --muted:#61707E; --line:#D3DAE1;
@@ -43,10 +45,14 @@ h1{font:700 22px/1.1 Unbounded,system-ui,sans-serif;margin:0;letter-spacing:-.02
 .stat b{display:block;font:600 20px/1.2 Unbounded,system-ui,sans-serif;font-variant-numeric:tabular-nums}
 .stat span{font-size:13px;color:var(--muted)}
 .mapbox{margin-top:12px;background:var(--paper);border:1px solid var(--line);border-radius:22px;overflow:hidden;position:relative}
-.mapbox svg{display:block;width:100%;height:auto;aspect-ratio:1/1;max-height:52vh}
-.scale{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted)}
-.acc{position:absolute;right:12px;bottom:10px;font-size:12px;color:var(--muted)}
-.mapempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--muted);font-size:15px}
+.lmap{width:100%;height:52vh;min-height:280px;background:var(--grid)}
+.tmap{height:46vh}
+.follow{position:absolute;right:10px;top:10px;z-index:500;border-radius:12px;padding:8px 12px;font-weight:600;font-size:14px;background:var(--paper);color:var(--ink);border:1px solid var(--line);box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.follow.tiles{top:auto;bottom:28px}
+.follow.on{background:var(--route);color:#fff;border-color:var(--route)}
+.leaflet-container{font:inherit}
+.acc{position:absolute;left:10px;top:10px;z-index:500;font-size:12px;background:var(--paper);color:var(--muted);border-radius:8px;padding:3px 8px}
+.acc:empty{display:none}
 .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
 button{font:inherit;cursor:pointer}
 .btn{border-radius:16px;padding:15px 12px;font-weight:600;font-size:16px;background:var(--paper);color:var(--ink);border:1px solid var(--line)}
@@ -91,9 +97,10 @@ a.btn{text-decoration:none;text-align:center}
   </div>
 
   <div class="mapbox" id="mapbox">
-    <svg id="map" viewBox="0 0 400 400" aria-label="Маршрут"></svg>
-    <div class="mapempty" id="mapempty">Нажмите «Старт», и здесь будет рисоваться ваш маршрут</div>
-    <div class="scale" id="scale"></div><div class="acc" id="acc"></div>
+    <div id="map" class="lmap" aria-label="Карта с маршрутом"></div>
+    <button class="follow on" id="followBtn">За мной</button>
+    <button class="follow tiles" id="tilesBtn">Карта</button>
+    <div class="acc" id="acc"></div>
   </div>
 
   <div class="controls" id="controls"></div>
@@ -101,7 +108,7 @@ a.btn{text-decoration:none;text-align:center}
 
   <h2>Поездки и прогулки</h2>
   <div class="trips" id="trips"><p class="empty">Здесь появятся сохранённые маршруты.</p></div>
-  <p class="tip">Держите приложение открытым на экране: когда айфон блокируется или вы переключаетесь в другое приложение, iOS не даёт веб-странице получать GPS. Точки с плохой точностью и стояние на месте отбрасываются, чтобы не завышать расстояние.</p>
+  <p class="tip">Держите приложение открытым на экране: когда айфон блокируется или вы переключаетесь в другое приложение, iOS не даёт веб-странице получать GPS. Если карта не грузится, нажмите кнопку «Карта» внизу справа, чтобы сменить источник. Точки с плохой точностью и стояние на месте отбрасываются, чтобы не завышать расстояние.</p>
 </div>
 <div class="scrim" id="scrim"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
@@ -162,41 +169,82 @@ function renderStats(){
   $("#total").textContent=dur(Math.max(0,total));
 }
 
-/* ---------- map (svg) ---------- */
-function drawRoute(svg,segments,live){
-  const pts=segments.flat();
-  const W=400,H=400,P=26;
-  let g=`<rect width="${W}" height="${H}" fill="var(--paper)"/>`;
-  for(let i=1;i<8;i++)g+=`<line x1="${i*50}" y1="0" x2="${i*50}" y2="${H}" stroke="var(--grid)"/><line x1="0" y1="${i*50}" x2="${W}" y2="${i*50}" stroke="var(--grid)"/>`;
-  if(!pts.length){svg.innerHTML=g;return null}
-  const lat0=pts.reduce((s,p)=>s+p[0],0)/pts.length, k=Math.cos(rad(lat0));
-  const xs=pts.map(p=>p[1]*k), ys=pts.map(p=>p[0]);
-  const mnx=Math.min(...xs),mxx=Math.max(...xs),mny=Math.min(...ys),mxy=Math.max(...ys);
-  const span=Math.max(mxx-mnx,mxy-mny,0.0009); // минимум ~100 м
-  const sc=(W-2*P)/span, ox=(W-(mxx-mnx)*sc)/2, oy=(H-(mxy-mny)*sc)/2;
-  const X=p=>ox+(p[1]*k-mnx)*sc, Y=p=>H-(oy+(p[0]-mny)*sc);
-  segments.forEach(s=>{ if(s.length>1) g+=`<polyline points="${s.map(p=>X(p).toFixed(1)+","+Y(p).toFixed(1)).join(" ")}" fill="none" stroke="var(--route)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>` });
-  const a=pts[0], b=pts[pts.length-1];
-  g+=`<circle cx="${X(a)}" cy="${Y(a)}" r="7" fill="var(--go)" stroke="var(--paper)" stroke-width="3"/>`;
-  g+= live?`<circle cx="${X(b)}" cy="${Y(b)}" r="12" fill="var(--route)" opacity=".2"/><circle cx="${X(b)}" cy="${Y(b)}" r="7" fill="var(--route)" stroke="var(--paper)" stroke-width="3"/>`
-          :`<circle cx="${X(b)}" cy="${Y(b)}" r="7" fill="var(--stop)" stroke="var(--paper)" stroke-width="3"/>`;
-  svg.innerHTML=g;
-  const metersAcross=span/k*111320; // приблизительно, по долготе/широте
-  return metersAcross*(100/(W-2*P)); // метров на 100 px
+/* ---------- map (leaflet + OSM) ---------- */
+const PROVIDERS=[
+  {name:"2ГИС",url:"https://tile{s}.maps.2gis.com/tiles?x={x}&y={y}&z={z}",sub:"0123",max:18,attr:"&copy; 2ГИС"},
+  {name:"Esri",url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",max:19,attr:"&copy; Esri"},
+  {name:"OSM",url:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",max:19,attr:'&copy; OpenStreetMap'},
+  {name:"Carto",url:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",sub:"abcd",max:19,attr:"&copy; OpenStreetMap, &copy; CARTO"}
+];
+let prov=0; try{prov=Math.min(PROVIDERS.length-1,+localStorage.getItem("track-tiles")||0)}catch(e){}
+function makeLayer(i,target,onFail){
+  const P=PROVIDERS[i]; let ok=0,bad=0;
+  const l=L.tileLayer(P.url,{maxZoom:19,maxNativeZoom:P.max,subdomains:P.sub||"abc",attribution:P.attr,crossOrigin:false});
+  l.on("tileload",()=>ok++);
+  l.on("tileerror",()=>{bad++; if(onFail&&!ok&&bad>=4){onFail();onFail=null}});
+  return l.addTo(target);
 }
+let map=null, lines=[], startMk=null, meMk=null, accCircle=null, follow=true, drawnSegs=0;
+function initMap(){
+  if(!window.L){$("#map").innerHTML='<p style="padding:20px;color:var(--muted)">Карта не загрузилась. Проверьте интернет и обновите страницу.</p>';return}
+  map=L.map("map",{zoomControl:false,attributionControl:true}).setView([55.7558,37.6173],12);
+  map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
+  setTiles(prov,true);
+  $("#tilesBtn").onclick=()=>setTiles((prov+1)%PROVIDERS.length,false);
+  map.on("dragstart",()=>setFollow(false));
+  $("#followBtn").onclick=()=>{setFollow(true);locateOnce()};
+  locateOnce();
+}
+let tileLayer=null, autoTries=0;
+function setTiles(i,auto){
+  if(tileLayer)tileLayer.remove();
+  prov=i; try{localStorage.setItem("track-tiles",i)}catch(e){}
+  $("#tilesBtn").textContent="Карта: "+PROVIDERS[i].name;
+  tileLayer=makeLayer(i,map,auto?()=>{ if(++autoTries<PROVIDERS.length) setTiles((prov+1)%PROVIDERS.length,true) }:null);
+}
+function setFollow(v){follow=v;$("#followBtn").classList.toggle("on",v)}
+function locateOnce(){
+  if(!("geolocation" in navigator)||!map)return;
+  navigator.geolocation.getCurrentPosition(p=>{showMe(p.coords.latitude,p.coords.longitude,p.coords.accuracy,true)},()=>{},{enableHighAccuracy:true,timeout:15000,maximumAge:30000});
+}
+function showMe(lat,lng,acc,center){
+  if(!map)return;
+  const ll=[lat,lng];
+  if(!meMk){
+    accCircle=L.circle(ll,{radius:acc,color:"#2F6BE0",weight:1,fillOpacity:.1}).addTo(map);
+    meMk=L.circleMarker(ll,{radius:8,color:"#fff",weight:3,fillColor:"#2F6BE0",fillOpacity:1}).addTo(map);
+  }else{meMk.setLatLng(ll);accCircle.setLatLng(ll).setRadius(acc)}
+  if(center&&follow) map.setView(ll,Math.max(map.getZoom(),16),{animate:true});
+  $("#acc").textContent=`±${Math.round(acc)} м`;
+}
+function resetRoute(){lines.forEach(l=>l.remove());lines=[];drawnSegs=0;if(startMk){startMk.remove();startMk=null}}
 function renderMap(){
-  const has=segs.flat().length>0;
-  $("#mapempty").style.display=has?"none":"flex";
-  const m=drawRoute($("#map"),segs,mode!=="idle");
-  $("#scale").textContent=m?`клетка ≈ ${fmtM(m/2)}`:"";
-  $("#acc").textContent=lastFix?`точность ±${Math.round(lastFix.acc)} м`:"";
+  if(!map)return;
+  while(lines.length<segs.length){lines.push(L.polyline([],{color:"#2F6BE0",weight:6,opacity:.9,lineJoin:"round"}).addTo(map))}
+  segs.forEach((sg,i)=>lines[i].setLatLngs(sg.map(p=>[p[0],p[1]])));
+  const all=segs.flat();
+  if(all.length&&!startMk) startMk=L.circleMarker([all[0][0],all[0][1]],{radius:7,color:"#fff",weight:3,fillColor:"#18995E",fillOpacity:1}).addTo(map);
 }
-const fmtM=m=>m>=1000?nf(m/1000,1)+" км":Math.round(m)+" м";
-
+function tripMap(el,segments){
+  if(!window.L)return null;
+  const m=L.map(el,{zoomControl:false});
+  m.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
+  makeLayer(prov,m,null);
+  const lls=segments.map(s=>s.map(p=>[p[0],p[1]])).filter(s=>s.length);
+  lls.forEach(s=>L.polyline(s,{color:"#2F6BE0",weight:5}).addTo(m));
+  const all=lls.flat();
+  if(all.length){
+    L.circleMarker(all[0],{radius:7,color:"#fff",weight:3,fillColor:"#18995E",fillOpacity:1}).addTo(m);
+    L.circleMarker(all[all.length-1],{radius:7,color:"#fff",weight:3,fillColor:"#C8452F",fillOpacity:1}).addTo(m);
+    m.fitBounds(L.latLngBounds(all),{padding:[24,24]});
+  } else m.setView([55.7558,37.6173],11);
+  return m;
+}
 /* ---------- gps ---------- */
 function onPos(p){
   const c=p.coords, t=p.timestamp||Date.now();
   lastFix={acc:c.accuracy};
+  showMe(c.latitude,c.longitude,c.accuracy,true);
   if(mode!=="rec"){renderMap();return}
   if(c.accuracy>MAX_ACC){msg(`Слабый сигнал GPS (±${Math.round(c.accuracy)} м). Жду точнее, лучше выйти на открытое место.`);renderMap();return}
   msg("");
@@ -237,7 +285,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 
 /* ---------- controls ---------- */
 function start(){
-  segs=[[]];dist=0;moving=0;maxKmh=0;curKmh=0;pausedMs=0;startT=Date.now();lastFix=null;
+  resetRoute();setFollow(true);segs=[[]];dist=0;moving=0;maxKmh=0;curKmh=0;pausedMs=0;startT=Date.now();lastFix=null;
   if(!startWatch())return;
   mode="rec";setState();keepAwake(true);msg("Ищу спутники…");
   clearInterval(tick);tick=setInterval(renderStats,1000);
@@ -279,7 +327,7 @@ function openTrip(t){
   const all=segments.flat(), a=all[0], b=all[all.length-1];
   const maps=a&&b?`https://maps.apple.com/?saddr=${a[0]},${a[1]}&daddr=${b[0]},${b[1]}`:"";
   $("#sheet").innerHTML=`<h3>${nf(t.dist/1000,2)} км</h3><p class="m" style="color:var(--muted);margin:0 0 10px">${esc(tripDate(t))}</p>
-   <div class="mapbox"><svg id="tmap" viewBox="0 0 400 400"></svg></div>
+   <div class="mapbox"><div id="tmap" class="lmap tmap"></div></div>
    <div class="odo" style="margin-top:10px"><div class="stats" style="margin-top:0">
     <div class="stat"><b>${dur(t.moving)}</b><span>в движении</span></div>
     <div class="stat"><b>${nf(avg)}</b><span>км/ч средняя</span></div>
@@ -287,30 +335,20 @@ function openTrip(t){
    </div></div>
    <div class="row">${maps?`<a class="btn" href="${maps}" target="_blank" rel="noopener">Открыть в Картах</a>`:""}<button class="btn danger" id="del">Удалить</button></div>
    <div class="row"><button class="btn" id="close">Закрыть</button></div>`;
-  drawRoute($("#tmap"),segments,false);
   $("#sheet").classList.add("open");$("#scrim").classList.add("open");
+  setTimeout(()=>{tmap=tripMap($("#tmap"),segments);setTimeout(()=>{if(tmap){tmap.invalidateSize();const all=segments.flat();if(all.length)tmap.fitBounds(L.latLngBounds(all.map(p=>[p[0],p[1]])),{padding:[24,24]})}},150)},280);
   $("#close").onclick=closeSheet;
   $("#del").onclick=async()=>{if(confirm("Удалить этот маршрут?")){await delTrip(t.id);closeSheet()}};
 }
-function closeSheet(){$("#sheet").classList.remove("open");$("#scrim").classList.remove("open")}
+let tmap=null;
+function closeSheet(){$("#sheet").classList.remove("open");$("#scrim").classList.remove("open");if(tmap){tmap.remove();tmap=null}}
 $("#scrim").onclick=closeSheet;
 
 window.addEventListener("beforeunload",e=>{if(mode!=="idle"){e.preventDefault();e.returnValue=""}});
 
 /* ---------- boot ---------- */
-lsLoad();setState();renderStats();renderMap();renderTrips();
-(async()=>{
-  const c=window.claude; if(!c||!c.use)return;
-  const [d,u]=await Promise.all([c.use("db"),c.use("user")]);
-  if(!d||!u)return;
-  const uid=await u.id(); if(!uid)return;
-  col=d.collection("data/users/"+uid);
-  col.onSnapshot(snap=>{
-    const fromDb=snap.docs.map(x=>x.data()).filter(x=>x.id&&String(x.id).startsWith("trip-"));
-    if(!fromDb.length&&trips.length&&!snap.metadata.fromCache){trips.forEach(t=>col.doc(t.id).set(t).catch(()=>{}));return}
-    trips=fromDb;renderTrips();
-  },()=>{});
-})();
+lsLoad();setState();renderStats();initMap();renderMap();renderTrips();
+
 </script>
 </body>
 </html>
