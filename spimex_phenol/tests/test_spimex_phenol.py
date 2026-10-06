@@ -182,8 +182,9 @@ def test_main_downloads_latest_files_bulletin(monkeypatch, tmp_path):
     assert "skip:61309" in (tmp_path / "p.processed.txt").read_text()
 
 
-def test_inspect_prints_groups(monkeypatch, capsys):
+def test_inspect_prints_groups(monkeypatch, capsys, tmp_path):
     fake_site(monkeypatch, {})
-    assert sp.main(["--inspect"]) == 0
+    assert sp.main(["--inspect", "--csv", str(tmp_path / "p.csv")]) == 0
+    assert (tmp_path / "spimex_page.html").exists()
     out = capsys.readouterr().out
-    assert "/files/N/" in out and "Бюллетень по итогам торгов" in out
+    assert "/files/N/" in out and "05.10.2026" in out

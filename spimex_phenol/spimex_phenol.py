@@ -178,24 +178,39 @@ def find_bulletin_links(html: str, page_url: str) -> list[Bulletin]:
     return out
 
 
-def inspect_page(session: requests.Session, url: str) -> None:
-    """Показать, какие ссылки есть на странице итогов — чтобы настроить разбор."""
+def inspect_page(session: requests.Session, url: str, save_to: Path | None = None) -> None:
+    """Показать, как устроена страница итогов — чтобы настроить разбор."""
     resp = session.get(url, timeout=60)
     html = resp.text
     print(f"HTTP {resp.status_code}, {len(html)} байт")
+    if save_to:
+        save_to.parent.mkdir(parents=True, exist_ok=True)
+        save_to.write_text(html, encoding="utf-8")
+        print(f"страница сохранена: {save_to}")
     groups: dict[str, list] = {}
     for m in re.finditer(r"""<a\b[^>]*?href\s*=\s*["']([^"'#]+)["'][^>]*>(.*?)</a>""", html, re.I | re.S):
         href, text = m[1], " ".join(TAG_RE.sub(" ", m[2]).split())
         pat = re.sub(r"\d+", "N", href.split("?")[0])
         groups.setdefault(pat, []).append((href, text))
-    print("Ссылки по шаблонам (сколько, шаблон, пример):")
-    for pat, items in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:15]:
-        href, text = items[0]
-        print(f"{len(items):4} {pat[:60]}  | {href[:70]} | {text[:40]}")
-    print("Рядом со словом «бюллетень»:")
-    for m in list(re.finditer(r"бюллетен", html, re.I))[:4]:
-        chunk = " ".join(html[max(0, m.start() - 150):m.start() + 350].split())
-        print("  …" + chunk[:400] + "…")
+    print("1) Ссылки по шаблонам:")
+    for pat, items in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:5]:
+        print(f"{len(items):4} {pat[:60]}")
+    print("2) Подписи у /files/N/ (сколько, текст):")
+    texts: dict[str, int] = {}
+    for _, t in groups.get("/files/N/", []):
+        t = TEXT_DATE_RE.sub("ДД.ММ.ГГГГ", t)[:60]
+        texts[t] = texts.get(t, 0) + 1
+    for t, n in sorted(texts.items(), key=lambda kv: -kv[1])[:8]:
+        print(f"{n:4} {t}")
+    print("3) Адреса запросов в коде страницы:")
+    ends = re.findall(r"""["'`]((?:https?://[^"'`\s]*spimex[^"'`\s]*)?/[^"'`\s<>]*"""
+                      r"""(?:ajax|api|json|report|bulletin|result|component)[^"'`\s<>]*)["'`]""", html, re.I)
+    for e in list(dict.fromkeys(ends))[:12]:
+        print("   ", e[:110])
+    print("4) Даты на странице с окружением:")
+    for m in list(TEXT_DATE_RE.finditer(html))[:4]:
+        chunk = " ".join(html[max(0, m.start() - 200):m.end() + 120].split())
+        print("  …" + chunk[:320] + "…")
 
 
 def list_bulletins(session: requests.Session, results_url: str, since: dt.date | None,
@@ -444,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(message)s")
     if args.inspect:
         for url in args.results_url or DEFAULT_RESULTS_URLS:
-            inspect_page(make_session(), url)
+            inspect_page(make_session(), url, args.csv.parent / "spimex_page.html")
         return 0
     pattern = re.compile(args.pattern, re.IGNORECASE)
     existing = load_table(args.csv)
