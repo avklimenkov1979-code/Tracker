@@ -73,3 +73,14 @@ def test_old_table_columns_are_tolerated(tmp_path):
     assert pi.main(["--file", str(page), "--csv", str(out)]) == 0
     lines = out.read_text(encoding="utf-8-sig").splitlines()
     assert len(lines) == 3 and lines[1].startswith("2026-10-05;FEN;Фенол;142055;0;")
+
+
+def test_summary_file_for_notification(tmp_path, capsys):
+    page = tmp_path / "page.html"
+    page.write_text(PAGE.replace('"FEN"', '"XXX"').replace("TOL", "FEN"), encoding="utf-8")
+    out = tmp_path / "phenol_index.csv"
+    assert pi.main(["--file", str(page), "--csv", str(out)]) == 0
+    text = (tmp_path / "phenol_last.txt").read_text(encoding="utf-8").strip()
+    assert text.endswith(": 172 008 ₽/т (-6,07%, -11 107 ₽), договоров 5, 315 т")
+    assert text.startswith("Фенол ")
+    assert text in capsys.readouterr().out
