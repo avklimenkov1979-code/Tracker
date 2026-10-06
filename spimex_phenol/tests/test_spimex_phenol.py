@@ -122,18 +122,19 @@ FILES_PAGE = """
 <tr><td>02.10.2026</td><td>Бюллетень по итогам торгов</td>
   <td><a href="/files/60659/">XLS</a> <a href="/files/60658/">PDF</a></td></tr>
 </table>
-<a href="/files/12/">Правила торгов</a>
+<a href="/files/12/">Ежемесячная статистика по итогам торгов</a>
 """
 
 
 def test_find_files_links():
     links = sp.find_bulletin_links(FILES_PAGE, "https://spimex.com/markets/oil_products/trades/results/")
-    assert [sp.source_key(b.url) for b in links] == ["61309", "61308", "60659", "60658", "12"]
+    assert [sp.source_key(b.url) for b in links] == ["61309", "61308", "60659", "60658"]
     assert links[0].url == "https://spimex.com/files/61309/"
     assert [b.date for b in links[:4]] == [dt.date(2026, 10, 5)] * 2 + [dt.date(2026, 10, 2)] * 2
 
 
 class FakeResp:
+    status_code = 200
     def __init__(self, body):
         self.body = body
         self.text = body if isinstance(body, str) else ""
@@ -179,3 +180,10 @@ def test_main_downloads_latest_files_bulletin(monkeypatch, tmp_path):
     assert sp.main(["--csv", str(out)]) == 0
     assert calls[1:] == []
     assert "skip:61309" in (tmp_path / "p.processed.txt").read_text()
+
+
+def test_inspect_prints_groups(monkeypatch, capsys):
+    fake_site(monkeypatch, {})
+    assert sp.main(["--inspect"]) == 0
+    out = capsys.readouterr().out
+    assert "/files/N/" in out and "Бюллетень по итогам торгов" in out
