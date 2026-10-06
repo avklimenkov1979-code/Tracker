@@ -88,7 +88,7 @@ HEADER_RULES = [
 ]
 
 LINK_RE = re.compile(
-    r"""href=["']([^"']*?/upload/reports/[^"']+?\.xlsx?(?:\?[^"']*)?)["']""",
+    r"""href\s*=\s*["']([^"']+?\.xlsx?(?:\?[^"']*)?)["']""",
     re.IGNORECASE,
 )
 FILE_DATE_RE = re.compile(r"(20\d{2})(\d{2})(\d{2})\d{0,6}")
@@ -130,7 +130,9 @@ def find_bulletin_links(html: str, page_url: str) -> list[Bulletin]:
             continue
         seen.add(key)
         out.append(Bulletin(url=url, date=date_from_filename(url)))
-    return out
+    # Бюллетени лежат в /upload/reports/; если такой папки нет — берём .xls с датой в имени
+    reports = [b for b in out if "/reports/" in b.url.lower()]
+    return reports or [b for b in out if b.date]
 
 
 def list_bulletins(session: requests.Session, results_url: str, since: dt.date | None,
@@ -142,6 +144,8 @@ def list_bulletins(session: requests.Session, results_url: str, since: dt.date |
         resp = session.get(url, timeout=60)
         resp.raise_for_status()
         links = find_bulletin_links(resp.text, url)
+        if page == 1 and not links:
+            explain_empty_page(resp)
         new = [b for b in links if b.url.split("?")[0] not in {f.url.split("?")[0] for f in found}]
         if not new:
             break
@@ -156,6 +160,23 @@ def list_bulletins(session: requests.Session, results_url: str, since: dt.date |
     else:
         found = [b for b in found if b.date is None or b.date >= since]
     return found
+
+
+def explain_empty_page(resp: requests.Response) -> None:
+    """Если ссылок не нашлось — показать, что вообще пришло, чтобы поправить разбор."""
+    html = resp.text
+    title = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    hrefs = re.findall(r"""href\s*=\s*["']([^"']+)["']""", html, re.IGNORECASE)
+    hint = [h for h in hrefs if re.search(r"xls|upload|report|bullet|pdf|download|file", h, re.IGNORECASE)]
+    log.warning("ссылок на .xls нет. Ответ: HTTP %s, %s, %d байт, заголовок: %r",
+                resp.status_code, resp.url, len(html),
+                " ".join(title[1].split())[:80] if title else None)
+    log.warning("всего ссылок: %d, похожих на файлы: %d", len(hrefs), len(hint))
+    for h in hint[:8]:
+        log.warning("  %s", h[:120])
+    if not hint:
+        text = re.sub(r"<script.*?</script>|<style.*?</style>|<[^>]+>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        log.warning("начало текста страницы: %s", " ".join(text.split())[:300])
 
 
 # ---------------------------------------------------------------- разбор
