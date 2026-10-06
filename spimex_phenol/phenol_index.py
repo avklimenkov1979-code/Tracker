@@ -271,7 +271,36 @@ def main(argv: list[str] | None = None) -> int:
         rows = sorted(merged.values(), key=key)
         save(args.csv, rows)
         log.info("записано строк за %s: %d, всего в таблице: %d (%s)", today, len(collected), len(rows), args.csv)
+
+    # короткая сводка для уведомления (её показывает автоматизация в «Командах»)
+    text = summary(collected[0]) if collected else "Фенол: цену получить не удалось — откройте a-Shell"
+    print(text)
+    try:
+        args.csv.parent.mkdir(parents=True, exist_ok=True)
+        args.csv.with_name("phenol_last.txt").write_text(text + "\n", encoding="utf-8")
+    except OSError as e:
+        log.warning("не удалось сохранить сводку: %s", e)
     return 1 if errors else 0
+
+
+def summary(r: dict) -> str:
+    """«Фенол 06.10: 142 055 ₽/т (+0,00%, +0 ₽), договоров 0, 0 т»."""
+    money = lambda v: f"{v:,.0f}".replace(",", " ")
+    signed = lambda v, f: ("+" if v > 0 else "") + f(v)
+    day = dt.date.fromisoformat(r["date"]).strftime("%d.%m")
+    text = f"Фенол {day}: {money(r['value'])} ₽/т"
+    extra = []
+    if r.get("change") is not None:
+        extra.append(signed(r["change"], lambda v: f"{v:.2f}".replace(".", ",")) + "%")
+    if r.get("change_abs") is not None:
+        extra.append(signed(r["change_abs"], money) + " ₽")
+    if extra:
+        text += f" ({', '.join(extra)})"
+    if r.get("deals") is not None:
+        text += f", договоров {r['deals']}"
+    if r.get("volume") is not None:
+        text += f", {money(r['volume'])} т"
+    return text
 
 
 if __name__ == "__main__":
