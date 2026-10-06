@@ -178,7 +178,8 @@ def find_bulletin_links(html: str, page_url: str) -> list[Bulletin]:
     return out
 
 
-def inspect_page(session: requests.Session, url: str, save_to: Path | None = None) -> None:
+def inspect_page(session: requests.Session, url: str, save_to: Path | None = None,
+                 find: str = "") -> None:
     """Показать, как устроена страница итогов — чтобы настроить разбор."""
     resp = session.get(url, timeout=60)
     html = resp.text
@@ -204,13 +205,20 @@ def inspect_page(session: requests.Session, url: str, save_to: Path | None = Non
         print(f"{n:4} {t}")
     print("3) Адреса запросов в коде страницы:")
     ends = re.findall(r"""["'`]((?:https?://[^"'`\s]*spimex[^"'`\s]*)?/[^"'`\s<>]*"""
-                      r"""(?:ajax|api|json|report|bulletin|result|component)[^"'`\s<>]*)["'`]""", html, re.I)
+                      r"""(?:ajax|api|json|report|bulletin|result|component|index|indicator)[^"'`\s<>]*)["'`]""", html, re.I)
     for e in list(dict.fromkeys(ends))[:12]:
         print("   ", e[:110])
-    print("4) Даты на странице с окружением:")
-    for m in list(TEXT_DATE_RE.finditer(html))[:4]:
-        chunk = " ".join(html[max(0, m.start() - 200):m.end() + 120].split())
-        print("  …" + chunk[:320] + "…")
+    if find:
+        hits = list(re.finditer(find, html, re.I))
+        print(f"4) Совпадения с «{find}»: {len(hits)}")
+        for m in hits[:4]:
+            chunk = " ".join(html[max(0, m.start() - 250):m.end() + 250].split())
+            print("  …" + chunk[:450] + "…")
+    else:
+        print("4) Даты на странице с окружением:")
+        for m in list(TEXT_DATE_RE.finditer(html))[:4]:
+            chunk = " ".join(html[max(0, m.start() - 200):m.end() + 120].split())
+            print("  …" + chunk[:320] + "…")
 
 
 def list_bulletins(session: requests.Session, results_url: str, since: dt.date | None,
@@ -450,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="разобрать локальный файл бюллетеня вместо загрузки с сайта")
     ap.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="путь к CSV (по умолчанию: %(default)s)")
     ap.add_argument("--no-xlsx", action="store_true", help="не сохранять копию в .xlsx")
+    ap.add_argument("--find", default="", help="с --inspect: показать окружение этого текста (regex)")
     ap.add_argument("--inspect", action="store_true",
                     help="показать ссылки со страницы итогов (для настройки) и выйти")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -459,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(message)s")
     if args.inspect:
         for url in args.results_url or DEFAULT_RESULTS_URLS:
-            inspect_page(make_session(), url, args.csv.parent / "spimex_page.html")
+            inspect_page(make_session(), url, args.csv.parent / "spimex_page.html", args.find)
         return 0
     pattern = re.compile(args.pattern, re.IGNORECASE)
     existing = load_table(args.csv)
