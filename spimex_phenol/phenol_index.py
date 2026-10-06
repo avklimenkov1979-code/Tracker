@@ -102,6 +102,24 @@ def parse_rows(html: str, code: str = DEFAULT_CODE) -> list[dict]:
     return out
 
 
+def debug_title(html: str, code: str) -> None:
+    """Что стоит перед первой строкой с кодом — чтобы настроить чтение заголовка."""
+    m = re.search(rf"""key=["']{re.escape(code)}["']""", html)
+    if not m:
+        print("строка", code, "не найдена")
+        return
+    before = html[max(0, m.start() - 8000):m.start()]
+    print("1) Текст перед строкой (конец):")
+    print("  ", text_of(before)[-500:])
+    hits = list(re.finditer(r"вторичн|рублях|НДС", before, re.I))
+    t = hits[-1] if hits else None
+    if t:
+        print("2) Разметка вокруг заголовка:")
+        print("  ", " ".join(before[max(0, t.start() - 700):t.start() + 500].split())[:1200])
+    for word in ("октябр", "сентябр", "selected", "v-model", "period"):
+        print(f"3) «{word}» на странице: {len(re.findall(word, html, re.I))} раз")
+
+
 def load_table(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -171,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", action="append", help="страница индикаторов (можно несколько раз)")
     ap.add_argument("--code", default=DEFAULT_CODE, help="код товара (по умолчанию: %(default)s)")
     ap.add_argument("--file", type=Path, help="разобрать сохранённую страницу вместо загрузки")
+    ap.add_argument("--debug", action="store_true", help="показать разметку заголовка таблицы и выйти")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -190,6 +209,11 @@ def main(argv: list[str] | None = None) -> int:
             except requests.RequestException as e:
                 log.error("не удалось открыть %s: %s", url, e)
                 errors += 1
+
+    if args.debug:
+        for url, html in pages:
+            debug_title(html, args.code)
+        return 0
 
     for url, html in pages:
         rows = parse_rows(html, args.code)
