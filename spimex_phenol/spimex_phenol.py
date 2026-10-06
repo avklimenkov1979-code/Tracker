@@ -384,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_xlsx:
             save_xlsx(args.csv.with_suffix(".xlsx"), rows)
     log.info("новых строк: %d, всего в таблице: %d (%s)", added, len(rows), args.csv)
-    if not collected:
+    if not collected and not errors:
         log.warning("фенол в обработанных бюллетенях не найден "
                     "(нет сделок или инструмент торгуется в другой секции — см. --results-url)")
     return 1 if errors else 0

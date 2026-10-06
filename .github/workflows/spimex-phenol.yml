@@ -1,8 +1,8 @@
 name: SPIMEX — цены на фенол
 
+# Только ручной запуск: SPIMEX отклоняет подключения с серверов GitHub
+# (Connection refused), поэтому ежедневный сбор идёт с телефона — см. README.
 on:
-  schedule:
-    - cron: "47 4 * * *"   # каждый день в 07:47 по Москве (04:47 UTC)
   workflow_dispatch:
     inputs:
       days:
