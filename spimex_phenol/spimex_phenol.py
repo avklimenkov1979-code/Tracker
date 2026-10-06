@@ -91,8 +91,15 @@ LINK_RE = re.compile(
     r"""href\s*=\s*["']([^"']+?\.xlsx?(?:\?[^"']*)?)["']""",
     re.IGNORECASE,
 )
+# Сейчас бюллетени на сайте отдаются ссылками вида /files/61309/ (без расширения).
+FILES_LINK_RE = re.compile(
+    r"""<a\b[^>]*?href\s*=\s*["']([^"']*?/files/\d+/?(?:\?[^"']*)?)["'][^>]*>(.*?)</a>""",
+    re.IGNORECASE | re.DOTALL,
+)
 FILE_DATE_RE = re.compile(r"(20\d{2})(\d{2})(\d{2})\d{0,6}")
+TEXT_DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(20\d{2})")
 SHEET_DATE_RE = re.compile(r"дата\s+торгов[:\s]*(\d{2})\.(\d{2})\.(\d{4})", re.IGNORECASE)
+TAG_RE = re.compile(r"<[^>]+>")
 
 
 @dataclass
@@ -100,6 +107,9 @@ class Bulletin:
     url: str
     date: dt.date | None = None
     rows: list[dict] = field(default_factory=list)
+    label: str = ""
+    is_bulletin: bool = True
+    instruments: int = 0
 
 
 # ---------------------------------------------------------------- загрузка
@@ -110,9 +120,14 @@ def make_session() -> requests.Session:
     return s
 
 
+def source_key(url: str) -> str:
+    """Короткий идентификатор файла: имя файла или номер из /files/61309/."""
+    path = url.split("?", 1)[0].rstrip("/")
+    return path.rsplit("/", 1)[-1]
+
+
 def date_from_filename(url: str) -> dt.date | None:
-    name = url.rsplit("/", 1)[-1].split("?", 1)[0]
-    m = FILE_DATE_RE.search(name)
+    m = FILE_DATE_RE.search(source_key(url))
     if not m:
         return None
     try:
@@ -121,24 +136,49 @@ def date_from_filename(url: str) -> dt.date | None:
         return None
 
 
+def date_from_text(text: str) -> dt.date | None:
+    for m in reversed(list(TEXT_DATE_RE.finditer(text))):
+        try:
+            return dt.date(int(m[3]), int(m[2]), int(m[1]))
+        except ValueError:
+            continue
+    return None
+
+
 def find_bulletin_links(html: str, page_url: str) -> list[Bulletin]:
     seen, out = set(), []
-    for href in LINK_RE.findall(html):
+
+    def add(href: str, date: dt.date | None, label: str = "") -> None:
         url = urljoin(page_url, href.replace("&amp;", "&"))
         key = url.split("?", 1)[0]
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(Bulletin(url=url, date=date_from_filename(url)))
+        if key not in seen:
+            seen.add(key)
+            out.append(Bulletin(url=url, date=date, label=label))
+
+    for href in LINK_RE.findall(html):
+        add(href, date_from_filename(href))
     # Бюллетени лежат в /upload/reports/; если такой папки нет — берём .xls с датой в имени
     reports = [b for b in out if "/reports/" in b.url.lower()]
-    return reports or [b for b in out if b.date]
+    xls = reports or [b for b in out if b.date]
+    if xls:
+        return xls
+
+    out, seen = [], set()
+    for m in FILES_LINK_RE.finditer(html):
+        label = " ".join(TAG_RE.sub(" ", m[2]).split())
+        # дата — в тексте ссылки или в тексте перед ней (строка таблицы бюллетеней)
+        before = " ".join(TAG_RE.sub(" ", html[max(0, m.start() - 1500):m.start()]).split())
+        add(m[1], date_from_text(label) or date_from_text(before[-300:]), label)
+    return out
 
 
 def list_bulletins(session: requests.Session, results_url: str, since: dt.date | None,
                    max_pages: int = 50) -> list[Bulletin]:
-    """Ссылки на бюллетени со страницы итогов (с пагинацией, если нужна история)."""
+    """Ссылки-кандидаты со страницы итогов, от новых к старым (с пагинацией для истории)."""
     found: list[Bulletin] = []
+    if since is not None:
+        # если даты у ссылок не распознаются, не листаем весь архив
+        max_pages = min(max_pages, 2 + (dt.date.today() - since).days // 7)
     for page in range(1, max_pages + 1):
         url = results_url if page == 1 else f"{results_url}?page=page-{page}"
         resp = session.get(url, timeout=60)
@@ -146,7 +186,8 @@ def list_bulletins(session: requests.Session, results_url: str, since: dt.date |
         links = find_bulletin_links(resp.text, url)
         if page == 1 and not links:
             explain_empty_page(resp)
-        new = [b for b in links if b.url.split("?")[0] not in {f.url.split("?")[0] for f in found}]
+        known = {f.url.split("?")[0] for f in found}
+        new = [b for b in links if b.url.split("?")[0] not in known]
         if not new:
             break
         found.extend(new)
@@ -155,11 +196,21 @@ def list_bulletins(session: requests.Session, results_url: str, since: dt.date |
         dates = [b.date for b in new if b.date]
         if dates and min(dates) < since:
             break
-    if since is None:
-        found = found[:1]
-    else:
+    if since is not None:
         found = [b for b in found if b.date is None or b.date >= since]
     return found
+
+
+def fetch_excel(session: requests.Session, url: str) -> bytes | None:
+    """Скачать файл, если это Excel; PDF и прочее пропускаются после первых байт."""
+    with session.get(url, timeout=120, stream=True) as resp:
+        resp.raise_for_status()
+        chunks = resp.iter_content(64 * 1024)
+        head = next(chunks, b"")
+        if not (head.startswith(b"\xd0\xcf\x11\xe0") or head.startswith(b"PK\x03\x04")):
+            log.debug("%s: не Excel (%r…) — пропускаю", url, head[:8])
+            return None
+        return head + b"".join(chunks)
 
 
 def explain_empty_page(resp: requests.Response) -> None:
@@ -248,17 +299,20 @@ def parse_bulletin(content: bytes, url: str, pattern: re.Pattern,
             break
     trade_date = trade_date or fallback_date or date_from_filename(url)
 
-    bulletin = Bulletin(url=url, date=trade_date)
+    bulletin = Bulletin(url=url, date=trade_date, is_bulletin=False)
     header: dict[str, int] | None = None
     for row in rows:
         h = map_header(row)
         if h:
             header = h  # в бюллетене несколько таблиц, у каждой свой заголовок
+            bulletin.is_bulletin = True
             continue
         if header is None:
             continue
         get = lambda k: row[header[k]] if k in header and header[k] < len(row) else None
         name = str(get("name") or "").strip()
+        if name and str(get("code") or "").strip():
+            bulletin.instruments += 1
         if not name or not pattern.search(name):
             continue
         rec = {
@@ -266,7 +320,7 @@ def parse_bulletin(content: bytes, url: str, pattern: re.Pattern,
             "code": str(get("code") or "").strip(),
             "name": " ".join(name.split()),
             "basis": " ".join(str(get("basis") or "").split()),
-            "source": url.rsplit("/", 1)[-1].split("?")[0],
+            "source": source_key(url),
         }
         for key, _ in COLUMNS:
             if key not in rec:
@@ -362,7 +416,13 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(message)s")
     pattern = re.compile(args.pattern, re.IGNORECASE)
     existing = load_table(args.csv)
-    done_sources = {r.get("source") for r in existing}
+    # обработанные файлы (в т.ч. PDF и бюллетени без фенола), чтобы не качать их повторно
+    seen_path = args.csv.with_suffix(".processed.txt")
+    try:
+        processed = set(seen_path.read_text(encoding="utf-8").split())
+    except OSError:
+        processed = set()
+    processed |= {r.get("source") for r in existing if r.get("source")}
 
     collected: list[dict] = []
     errors = 0
@@ -377,27 +437,50 @@ def main(argv: list[str] | None = None) -> int:
         since = dt.date.today() - dt.timedelta(days=args.days) if args.days else None
         for results_url in args.results_url or DEFAULT_RESULTS_URLS:
             try:
-                bulletins = list_bulletins(session, results_url, since)
+                candidates = list_bulletins(session, results_url, since)
             except requests.RequestException as e:
                 log.error("не удалось открыть %s: %s", results_url, e)
                 errors += 1
                 continue
-            log.info("%s: найдено бюллетеней: %d", results_url, len(bulletins))
-            for b in bulletins:
-                fname = b.url.rsplit("/", 1)[-1].split("?")[0]
-                if fname in done_sources:
-                    log.info("%s уже в таблице — пропускаю", fname)
+            log.info("%s: ссылок-кандидатов: %d", results_url, len(candidates))
+            found = downloads = 0
+            for b in candidates:
+                key = source_key(b.url)
+                if "skip:" + key in processed:  # PDF или другой документ
                     continue
+                if key in processed:
+                    if since is None:
+                        log.info("последний бюллетень (%s) уже обработан", key)
+                        break
+                    continue
+                if downloads >= (20 if since is None else 40 + args.days * 3):
+                    log.warning("слишком много файлов без бюллетеня — останавливаюсь")
+                    break
+                downloads += 1
                 try:
-                    resp = session.get(b.url, timeout=120)
-                    resp.raise_for_status()
-                    parsed = parse_bulletin(resp.content, b.url, pattern, b.date)
+                    content = fetch_excel(session, b.url)
+                    parsed = parse_bulletin(content, b.url, pattern, b.date) if content else None
                 except Exception as e:  # битый файл не должен ронять весь прогон
                     log.error("ошибка при обработке %s: %s", b.url, e)
                     errors += 1
                     continue
-                log.info("%s: дата %s, строк с фенолом: %d", fname, parsed.date, len(parsed.rows))
+                if parsed is None or not parsed.is_bulletin:
+                    log.debug("%s (%s): не бюллетень", key, b.label)
+                    processed.add("skip:" + key)
+                    continue
+                if since is not None and parsed.date and parsed.date < since:
+                    break
+                found += 1
+                processed.add(key)
+                log.info("бюллетень %s от %s: инструментов %d, строк с фенолом: %d",
+                         key, parsed.date, parsed.instruments, len(parsed.rows))
                 collected += parsed.rows
+                if since is None:
+                    break
+            if not found:
+                log.warning("%s: ни одного бюллетеня Excel не найдено", results_url)
+                for b in candidates[:6]:
+                    log.warning("  %s  %s  %s", source_key(b.url), b.date or "-", b.label[:60])
 
     rows, added = merge_rows(existing, collected)
     if collected or not args.csv.exists():
@@ -405,6 +488,12 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_xlsx:
             save_xlsx(args.csv.with_suffix(".xlsx"), rows)
     log.info("новых строк: %d, всего в таблице: %d (%s)", added, len(rows), args.csv)
+    if not args.file:
+        try:
+            seen_path.parent.mkdir(parents=True, exist_ok=True)
+            seen_path.write_text("\n".join(sorted(processed)) + "\n", encoding="utf-8")
+        except OSError as e:
+            log.warning("не удалось сохранить %s: %s", seen_path, e)
     if not collected and not errors:
         log.warning("фенол в обработанных бюллетенях не найден "
                     "(нет сделок или инструмент торгуется в другой секции — см. --results-url)")
