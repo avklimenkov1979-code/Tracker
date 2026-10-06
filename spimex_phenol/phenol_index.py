@@ -3,9 +3,10 @@
 
 Дневные бюллетени торгов с 28.09.2026 закрыты (Указ №686), но биржа публикует
 индикаторы оптовых цен нефтегазохимии, среди них фенол — код FEN. Скрипт
-забирает строки FEN со страниц индикаторов и дописывает их в таблицу
-(CSV для Excel + копия .xlsx). Один запуск в день — одна строка на каждую
-таблицу индикаторов; повторный запуск в тот же день перезаписывает строку.
+забирает строку FEN со страницы индикаторов — значение, изменение, значение
+за предыдущий день, объём, сумму и количество договоров — и дописывает её
+в таблицу (CSV для Excel + копия .xlsx). Повторный запуск в тот же день
+перезаписывает строку.
 
   python phenol_index.py --csv ~/Documents/SPIMEX/phenol_index.csv
 """
@@ -36,19 +37,21 @@ COLUMNS = [
     ("date", "Дата сбора"),
     ("code", "Код"),
     ("name", "Наименование"),
-    ("value", "Значение, руб./т"),
+    ("value", "Индикатор, руб./т"),
     ("change", "Изменение, %"),
-    ("title", "Индикатор"),
-    ("table", "№ таблицы"),
+    ("change_abs", "Изменение, руб."),
+    ("prev", "Пред. день, руб./т"),
+    ("volume", "Объём, т"),
+    ("turnover", "Сумма договоров, руб."),
+    ("deals", "Кол-во договоров"),
     ("page", "Страница"),
 ]
+NUMERIC = {"value", "change", "change_abs", "prev", "volume", "turnover", "deals"}
 
 TAG_RE = re.compile(r"<[^>]+>")
 ROW_START_RE = re.compile(r"""<div\b[^>]*class=["'][^"']*indexes-table__row""", re.I)
 VALUE_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:[ \xa0 ]\d{3})+(?:[.,]\d+)?|\d{4,}(?:[.,]\d+)?)(?![\d%])")
 CHANGE_RE = re.compile(r"([+\-−–]?\s?\d+(?:[.,]\d+)?)\s*%")
-TITLE_RE = re.compile(r"(?:Национальн|Территориальн|Сводн)[^()]{0,400}?\([^()]{0,80}\)", re.I)
-TITLE_START_RE = re.compile(r"Национальн|Территориальн|Сводн", re.I)
 
 
 def text_of(html: str) -> str:
@@ -60,10 +63,41 @@ def to_float(s: str) -> float:
     return float(re.sub(r"[ \xa0 ]", "", s).replace("−", "-").replace("–", "-").replace(",", "."))
 
 
-def short_title(t: str) -> str:
-    """От последнего «Национальные/Территориальные/Сводные» до конца скобки."""
-    starts = [m.start() for m in TITLE_START_RE.finditer(t)]
-    return " ".join(t[starts[-1]:].split())[:200]
+GROUPED = r"\d{1,3}(?:[ \xa0\u202f]\d{3})*(?:[.,]\d+)?"
+
+
+def digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
+def parse_details(text: str) -> dict:
+    """Хвост строки после «+9.98%»: «19126 19 126 191 628 пред. день 220 тонн
+    46 365 990 46.37 млн.руб. 7 Количество договоров»."""
+    out: dict = {}
+    m = re.match(r"\s*([+\-−–]?\d+(?:[.,]\d+)?)\s+(.*?)\s*пред\.?\s*день", text, re.S)
+    if m:
+        raw, rest = m[1], m[2]
+        out["change_abs"] = to_float(raw)
+        # за «сырым» числом идёт оно же с разрядами, затем — значение за прошлый день
+        need, i = len(digits(raw)), 0
+        while need and i < len(rest):
+            need -= rest[i].isdigit()
+            i += 1
+        prev = digits(rest[i:])
+        if prev:
+            out["prev"] = float(prev)
+    m = re.search(r"день\s+(" + GROUPED + r")\s*тонн", text)
+    if m:
+        out["volume"] = to_float(m[1])
+    m = re.search(r"тонн\w*\s+(.*?)\s+(" + GROUPED + r")\s*млн", text)
+    if m and digits(m[1]):
+        out["turnover"] = to_float(m[1])
+    elif m:
+        out["turnover"] = to_float(m[2]) * 1e6
+    m = re.search(r"млн\.?\s*руб\.?\s+(\d+)\s+Количество", text)
+    if m:
+        out["deals"] = int(m[1])
+    return out
 
 
 def parse_rows(html: str, code: str = DEFAULT_CODE) -> list[dict]:
@@ -85,20 +119,19 @@ def parse_rows(html: str, code: str = DEFAULT_CODE) -> list[dict]:
         if not val:
             log.warning("в строке %s не найдено значение: %s", code, row_text[:200])
             continue
-        chg = CHANGE_RE.search(after_code[val.end():])
+        tail = after_code[val.end():]
+        chg = CHANGE_RE.search(tail)
         name = after_code[:val.start()].strip(" :–-") or code
-        before = text_of(html[max(0, start - 6000):start])
-        titles = list(TITLE_RE.finditer(before))
-        out.append({
+        rec = {
             "code": code,
             "name": name,
             "value": to_float(val[1]),
             "change": to_float(chg[1].replace(" ", "")) if chg else None,
-            "title": short_title(titles[-1][0]) if titles else "",
             "_text": row_text,
-        })
-    for i, r in enumerate(out, 1):
-        r["table"] = i
+        }
+        if chg:
+            rec.update(parse_details(tail[chg.end():]))
+        out.append(rec)
     return out
 
 
@@ -124,6 +157,7 @@ def load_table(path: Path) -> list[dict]:
     if not path.exists():
         return []
     keys = {title: key for key, title in COLUMNS}
+    keys["Значение, руб./т"] = "value"  # заголовок из первой версии таблицы
     with path.open(encoding="utf-8-sig", newline="") as f:
         return [{keys.get(k, k): v for k, v in r.items()} for r in csv.DictReader(f, delimiter=";")]
 
@@ -168,15 +202,16 @@ def save(path: Path, rows: list[dict]) -> None:
             v = r.get(k)
             if k == "date" and v:
                 v = dt.date.fromisoformat(str(v))
-            elif k in ("value", "change", "table"):
+            elif k in NUMERIC:
                 v = num(v)
             line.append(v)
         ws.append(line)
     for (c,) in ws.iter_rows(min_row=2, max_col=1):
         c.number_format = "DD.MM.YYYY"
-    for (c,) in ws.iter_rows(min_row=2, min_col=4, max_col=4):
-        c.number_format = "# ##0"
-    for col, w in zip("ABCDEFGH", (12, 8, 14, 16, 12, 70, 10, 45)):
+    for row in ws.iter_rows(min_row=2, min_col=4, max_col=10):
+        for c in row:
+            c.number_format = "0.00" if c.column == 5 else "#,##0"
+    for col, w in zip("ABCDEFGHIJK", (12, 8, 14, 16, 12, 14, 16, 10, 20, 10, 45)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
@@ -222,14 +257,15 @@ def main(argv: list[str] | None = None) -> int:
             errors += 1
         for r in rows:
             r.update(date=today, page=url)
-            log.info("%s %s = %s руб./т (%s%%) — %s", r["code"], r["name"], fmt(r["value"]),
-                     fmt(r["change"]) if r["change"] is not None else "?", r["title"] or f"таблица {r['table']}")
+            log.info("%s %s = %s руб./т (%s%%), пред. день %s, объём %s т, договоров %s",
+                     r["code"], r["name"], fmt(r["value"]), fmt(r.get("change")) or "?",
+                     fmt(r.get("prev")) or "?", fmt(r.get("volume")) or "?", fmt(r.get("deals")) or "?")
             log.debug("  текст строки: %s", r.pop("_text"))
             r.pop("_text", None)
             collected.append(r)
 
     if collected:
-        key = lambda r: (str(r.get("date")), str(r.get("page")), str(r.get("table")))
+        key = lambda r: (str(r.get("date")), str(r.get("page")), str(r.get("code")))
         merged = {key(r): r for r in load_table(args.csv)}
         merged.update({key(r): r for r in collected})
         rows = sorted(merged.values(), key=key)
