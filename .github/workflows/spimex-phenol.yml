@@ -1,0 +1,46 @@
+name: SPIMEX — цены на фенол
+
+on:
+  schedule:
+    - cron: "47 4 * * *"   # каждый день в 07:47 по Москве (04:47 UTC)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Догрузить историю за N дней (0 — только последний бюллетень)"
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: spimex-phenol
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: spimex_phenol/requirements.txt
+
+      - run: pip install -r spimex_phenol/requirements.txt
+
+      - name: Собрать цены
+        run: python spimex_phenol/spimex_phenol.py --days "${{ github.event.inputs.days || 0 }}"
+
+      - name: Закоммитить таблицу
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add data/phenol_prices.csv data/phenol_prices.xlsx
+          if git diff --cached --quiet; then
+            echo "Новых данных нет"
+          else
+            git commit -m "Фенол SPIMEX: данные на $(date -u +%F)"
+            git push
+          fi
