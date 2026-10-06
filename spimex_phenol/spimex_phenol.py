@@ -167,9 +167,35 @@ def find_bulletin_links(html: str, page_url: str) -> list[Bulletin]:
     for m in FILES_LINK_RE.finditer(html):
         label = " ".join(TAG_RE.sub(" ", m[2]).split())
         # дата — в тексте ссылки или в тексте перед ней (строка таблицы бюллетеней)
-        before = " ".join(TAG_RE.sub(" ", html[max(0, m.start() - 1500):m.start()]).split())
+        seg = html[max(0, m.start() - 1500):m.start()]
+        low = seg.lower()
+        row = max(low.rfind(t) for t in ("<tr", "<li", "</tr>", "</li>"))  # начало строки таблицы/списка
+        before = " ".join(TAG_RE.sub(" ", seg[row:] if row >= 0 else seg[-300:]).split())
+        context = f"{before[-300:]} {label}"
+        if not re.search(r"бюллетен", context, re.IGNORECASE):
+            continue  # на странице есть и другие файлы — например, ежемесячная статистика
         add(m[1], date_from_text(label) or date_from_text(before[-300:]), label)
     return out
+
+
+def inspect_page(session: requests.Session, url: str) -> None:
+    """Показать, какие ссылки есть на странице итогов — чтобы настроить разбор."""
+    resp = session.get(url, timeout=60)
+    html = resp.text
+    print(f"HTTP {resp.status_code}, {len(html)} байт")
+    groups: dict[str, list] = {}
+    for m in re.finditer(r"""<a\b[^>]*?href\s*=\s*["']([^"'#]+)["'][^>]*>(.*?)</a>""", html, re.I | re.S):
+        href, text = m[1], " ".join(TAG_RE.sub(" ", m[2]).split())
+        pat = re.sub(r"\d+", "N", href.split("?")[0])
+        groups.setdefault(pat, []).append((href, text))
+    print("Ссылки по шаблонам (сколько, шаблон, пример):")
+    for pat, items in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:15]:
+        href, text = items[0]
+        print(f"{len(items):4} {pat[:60]}  | {href[:70]} | {text[:40]}")
+    print("Рядом со словом «бюллетень»:")
+    for m in list(re.finditer(r"бюллетен", html, re.I))[:4]:
+        chunk = " ".join(html[max(0, m.start() - 150):m.start() + 350].split())
+        print("  …" + chunk[:400] + "…")
 
 
 def list_bulletins(session: requests.Session, results_url: str, since: dt.date | None,
@@ -409,11 +435,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="разобрать локальный файл бюллетеня вместо загрузки с сайта")
     ap.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="путь к CSV (по умолчанию: %(default)s)")
     ap.add_argument("--no-xlsx", action="store_true", help="не сохранять копию в .xlsx")
+    ap.add_argument("--inspect", action="store_true",
+                    help="показать ссылки со страницы итогов (для настройки) и выйти")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
+    if args.inspect:
+        for url in args.results_url or DEFAULT_RESULTS_URLS:
+            inspect_page(make_session(), url)
+        return 0
     pattern = re.compile(args.pattern, re.IGNORECASE)
     existing = load_table(args.csv)
     # обработанные файлы (в т.ч. PDF и бюллетени без фенола), чтобы не качать их повторно
@@ -453,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("последний бюллетень (%s) уже обработан", key)
                         break
                     continue
-                if downloads >= (20 if since is None else 40 + args.days * 3):
+                if downloads >= (6 if since is None else 10 + args.days * 2):
                     log.warning("слишком много файлов без бюллетеня — останавливаюсь")
                     break
                 downloads += 1
