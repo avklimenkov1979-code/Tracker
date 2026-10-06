@@ -68,7 +68,7 @@ SPIMEX не пускает зарубежные серверы (с GitHub Action
    «Запускать сразу». Действие — **a-Shell → Execute Command**:
 
    ```bash
-   python3 spimex_phenol.py --days 7 --csv ~/Documents/SPIMEX/phenol_prices.csv
+   python3 ~/Documents/spimex_phenol.py --days 7 --csv ~/Documents/SPIMEX/phenol_prices.csv
    ```
 
 3. Таблица: **Файлы → На iPhone → a-Shell → SPIMEX → `phenol_prices.xlsx`**.

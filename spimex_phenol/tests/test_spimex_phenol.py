@@ -107,6 +107,75 @@ def test_list_bulletins_paginates(monkeypatch):
         def get(self, url, timeout): return Resp(pages.get(url, ""))
 
     latest = sp.list_bulletins(S(), "R", None)
-    assert len(latest) == 1 and latest[0].date == dt.date(2026, 10, 5)
+    assert [b.date for b in latest] == [dt.date(2026, 10, 5), dt.date(2026, 10, 2)]
+    hist = sp.list_bulletins(S(), "R", dt.date.today() - dt.timedelta(days=5))
+    assert len(hist) == len([d for d in (dt.date(2026, 10, 5), dt.date(2026, 10, 2))
+                              if d >= dt.date.today() - dt.timedelta(days=5)])
     hist = sp.list_bulletins(S(), "R", dt.date(2026, 9, 25))
     assert [b.date for b in hist] == [dt.date(2026, 10, 5), dt.date(2026, 10, 2)]
+
+
+FILES_PAGE = """
+<table>
+<tr><td>05.10.2026</td><td>Бюллетень по итогам торгов</td>
+  <td><a href="/files/61309/" class="xls">XLS</a> <a href="/files/61308/">PDF</a></td></tr>
+<tr><td>02.10.2026</td><td>Бюллетень по итогам торгов</td>
+  <td><a href="/files/60659/">XLS</a> <a href="/files/60658/">PDF</a></td></tr>
+</table>
+<a href="/files/12/">Правила торгов</a>
+"""
+
+
+def test_find_files_links():
+    links = sp.find_bulletin_links(FILES_PAGE, "https://spimex.com/markets/oil_products/trades/results/")
+    assert [sp.source_key(b.url) for b in links] == ["61309", "61308", "60659", "60658", "12"]
+    assert links[0].url == "https://spimex.com/files/61309/"
+    assert [b.date for b in links[:4]] == [dt.date(2026, 10, 5)] * 2 + [dt.date(2026, 10, 2)] * 2
+
+
+class FakeResp:
+    def __init__(self, body):
+        self.body = body
+        self.text = body if isinstance(body, str) else ""
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, n):
+        for i in range(0, len(self.body), n):
+            yield self.body[i:i + n]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def fake_site(monkeypatch, files):
+    calls = []
+
+    class Sess:
+        def get(self, url, timeout, stream=False):
+            calls.append(url)
+            if url.endswith("/results/"):
+                return FakeResp(FILES_PAGE)
+            return FakeResp(files.get(sp.source_key(url), b"%PDF-1.4 ..."))
+
+    monkeypatch.setattr(sp, "make_session", lambda: Sess())
+    return calls
+
+
+def test_main_downloads_latest_files_bulletin(monkeypatch, tmp_path):
+    calls = fake_site(monkeypatch, {"61308": make_xls()})  # Excel оказался вторым, первый — PDF
+    out = tmp_path / "p.csv"
+    assert sp.main(["--csv", str(out)]) == 0
+    rows = sp.load_table(out)
+    assert [r["code"] for r in rows] == ["PHNL-KST1", "PHNL-SMR2"]
+    assert rows[0]["source"] == "61308"
+    assert calls[1:] == ["https://spimex.com/files/61309/", "https://spimex.com/files/61308/"]
+    # повторный запуск: PDF помнится как обработанный, бюллетень уже в таблице
+    calls.clear()
+    assert sp.main(["--csv", str(out)]) == 0
+    assert calls[1:] == []
+    assert "skip:61309" in (tmp_path / "p.processed.txt").read_text()
