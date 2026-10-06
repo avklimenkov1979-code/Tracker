@@ -27,12 +27,11 @@ cat > "$APP/run.sh" <<RUN
 export PATH="$PREFIX/bin:\$PATH"
 cd "$APP"
 # подтягиваем свежую версию скрипта (исправления приходят сами)
-curl -fsSL -o spimex_phenol.py.new "$RAW/spimex_phenol.py" && mv spimex_phenol.py.new spimex_phenol.py
-# --days 7: если телефон был выключен, пропущенные дни догрузятся
-python spimex_phenol.py --days "\${1:-7}" --csv "$OUT/phenol_prices.csv" >> "$APP/log.txt" 2>&1
+curl -fsSL -o phenol_index.py.new "$RAW/phenol_index.py" && mv phenol_index.py.new phenol_index.py
+python phenol_index.py --csv "$OUT/phenol_index.csv" >> "$APP/log.txt" 2>&1
 code=\$?
 if command -v termux-notification >/dev/null; then
-  termux-notification --title "Фенол SPIMEX" --content "\$(grep 'новых строк' "$APP/log.txt" | tail -n 1 | cut -c25-)"
+  termux-notification --title "Фенол SPIMEX" --content "\$(grep 'записано строк' "$APP/log.txt" | tail -n 1 | cut -c25-)"
 fi
 exit \$code
 RUN
@@ -45,9 +44,9 @@ grep -q "pgrep crond" "$HOME/.bashrc" 2>/dev/null || \
 pgrep crond >/dev/null || crond
 termux-wake-lock 2>/dev/null || true
 
-echo "==> Первый запуск: история за 30 дней"
-"$APP/run.sh" 30 || true
+echo "==> Первый запуск"
+"$APP/run.sh" || true
 tail -n 15 "$APP/log.txt"
 echo
-echo "Готово. Таблица: $OUT/phenol_prices.xlsx (и .csv)"
+echo "Готово. Таблица: $OUT/phenol_index.xlsx (и .csv)"
 echo "Запустить вручную: ~/spimex/run.sh    Лог: ~/spimex/log.txt"
