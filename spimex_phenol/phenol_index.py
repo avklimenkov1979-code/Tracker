@@ -20,7 +20,10 @@ import re
 import sys
 from pathlib import Path
 
-import requests
+try:
+    import requests
+except ImportError:  # в урезанном окружении (расширение a-Shell) — встроенный urllib
+    requests = None
 
 log = logging.getLogger("phenol_index")
 
@@ -153,6 +156,16 @@ def debug_title(html: str, code: str) -> None:
         print(f"3) «{word}» на странице: {len(re.findall(word, html, re.I))} раз")
 
 
+def fetch(url: str) -> str:
+    if requests is not None:
+        resp = requests.get(url, headers=HEADERS, timeout=60)
+        resp.raise_for_status()
+        return resp.text
+    import urllib.request
+    with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=60) as resp:
+        return resp.read().decode(resp.headers.get_content_charset() or "utf-8", "replace")
+
+
 def load_table(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -187,8 +200,12 @@ def save(path: Path, rows: list[dict]) -> None:
         for r in rows:
             w.writerow([fmt(r.get(k)) for k, _ in COLUMNS])
 
-    import openpyxl
-    from openpyxl.styles import Font
+    try:
+        import openpyxl
+        from openpyxl.styles import Font
+    except ImportError:  # например, при запуске из «Команд» без открытия a-Shell
+        log.warning("openpyxl недоступен — обновлён только CSV")
+        return
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -234,14 +251,10 @@ def main(argv: list[str] | None = None) -> int:
     collected, errors = [], 0
     pages = [(str(args.file), args.file.read_text(encoding="utf-8"))] if args.file else []
     if not args.file:
-        session = requests.Session()
-        session.headers.update(HEADERS)
         for url in args.url or DEFAULT_URLS:
             try:
-                resp = session.get(url, timeout=60)
-                resp.raise_for_status()
-                pages.append((url, resp.text))
-            except requests.RequestException as e:
+                pages.append((url, fetch(url)))
+            except Exception as e:  # сеть, HTTP-ошибка, таймаут
                 log.error("не удалось открыть %s: %s", url, e)
                 errors += 1
 
