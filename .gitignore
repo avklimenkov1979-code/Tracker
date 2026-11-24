@@ -4,3 +4,5 @@ production/data/
 production/**/reports/
 production/1c/*.zip
 production/1c/*.epf
+Nakladnaya_po_foto.zip
+*.epf
