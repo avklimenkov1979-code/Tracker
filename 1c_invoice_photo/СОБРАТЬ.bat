@@ -81,19 +81,66 @@ if not exist "%BASE%\1Cv8.1CD" (
 
 echo  Шаг 2 из 2: собираю программу...
 start "" /wait "%V8%" DESIGNER /F "%BASE%" /DisableStartupDialogs /DisableStartupMessages /LoadExternalDataProcessorOrReportFromFiles "%SRC%" "%OUT%" /Out "%LOG2%"
-if not exist "%OUT%" (
-  echo.
-  echo  [X] Сборка не удалась. Сообщение 1С:
-  echo  ----------------------------------------------------------
-  if exist "%LOG2%" type "%LOG2%"
-  echo.
-  echo  ----------------------------------------------------------
-  echo  Сфотографируйте этот экран и пришлите.
-  echo.
-  pause
-  exit /b 1
-)
+if exist "%OUT%" goto built
 
+rem ---- Plan B: build through the user's own 1C base (license comes from the 1C server) ----
+echo.
+echo  Временной базе не хватило лицензии 1С - так бывает, когда лицензию выдаёт сервер.
+echo  Соберу через вашу рабочую базу 1С. В самой базе НИЧЕГО не меняется,
+echo  она нужна только чтобы 1С выдала лицензию.
+echo.
+
+set "LIST=%WORK%\bases.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=Join-Path $env:APPDATA '1C\1CEStart\ibases.v8i'; $out=@(); if(Test-Path $f){ $n=''; foreach($l in Get-Content -Encoding UTF8 $f){ if($l -match '^\[(.+)\]$'){$n=$Matches[1]} elseif($l -match '^Connect=(.+)$'){ $out += ($n + '|' + $Matches[1]) } } }; [IO.File]::WriteAllLines('%LIST%', [string[]]$out)"
+
+set /a N=0
+for /f "usebackq tokens=1* delims=|" %%a in ("%LIST%") do (
+  set /a N+=1
+  set "NAME!N!=%%a"
+  set "CONN!N!=%%b"
+  echo   !N!. %%a
+)
+if %N%==0 (
+  echo  [X] Не нашёл список баз 1С на этом компьютере.
+  goto specialist
+)
+echo.
+set "CHOICE="
+set /p "CHOICE=  Введите номер вашей рабочей базы и нажмите Enter: "
+if not defined CONN%CHOICE% (
+  echo  [X] Нет базы с таким номером.
+  goto specialist
+)
+set "CONN=!CONN%CHOICE%!"
+rem 1C needs quotes inside the connection string doubled.
+set "CONN=!CONN:"=""!"
+echo.
+echo  Подключаюсь к базе "!NAME%CHOICE%!".
+echo  Если 1С спросит пользователя и пароль - введите те же, что для обычной работы.
+echo.
+start "" /wait "%V8%" DESIGNER /IBConnectionString "!CONN!" /DisableStartupMessages /LoadExternalDataProcessorOrReportFromFiles "%SRC%" "%OUT%" /Out "%LOG2%"
+if exist "%OUT%" goto built
+
+:specialist
+echo.
+echo  [X] Собрать не удалось. Сообщение 1С:
+echo  ----------------------------------------------------------
+if exist "%LOG2%" type "%LOG2%"
+echo.
+echo  ----------------------------------------------------------
+echo  Если написано про права или конфигуратор - у вашей учётной записи нет доступа
+echo  к режиму "Конфигуратор". Тогда передайте папку Nakladnaya_po_foto специалисту 1С:
+echo  ему нужно открыть Конфигуратор, выбрать "Файл - Загрузить внешнюю обработку,
+echo  отчет из файлов", указать файл src\ЗагрузкаНакладнойПоФото.xml и сохранить
+echo  результат как Nakladnaya_po_foto.epf. Это займёт 2 минуты.
+echo.
+echo  Или сфотографируйте этот экран и пришлите.
+echo.
+popd
+pause
+exit /b 1
+
+:built
 set "RESULT=%HERE%\Nakladnaya_po_foto.epf"
 copy /Y "%OUT%" "%RESULT%" >nul
 if errorlevel 1 (
