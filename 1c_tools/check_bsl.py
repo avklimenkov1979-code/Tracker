@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Проверка модулей 1С (*.bsl) перед отправкой архива.
+
+Ловит ошибки, которые уже встречались в этих обработках и всплывали только
+у пользователя при открытии формы:
+
+  * переменная или параметр с именем свойства формы или глобального контекста
+    (ИмяФормы, Подсказка, Документы, Элементы...): «Поле объекта недоступно для записи»;
+  * несуществующие свойства элементов формы (ВысотаВСтроках);
+  * вызов метода прямо у выражения «Новый ...(...).Метод()»: «Неопознанный оператор»;
+  * непарные Процедура/КонецПроцедуры, Если/КонецЕсли, Цикл/КонецЦикла,
+    Попытка/КонецПопытки, #Область/#КонецОбласти;
+  * вызов процедуры этого модуля, которой в модуле нет (опечатка в имени);
+  * повторное объявление процедуры или функции.
+
+  python3 1c_tools/check_bsl.py [папка или файлы ...]
+
+Без аргументов проверяет все *.bsl в репозитории. Код возврата 1, если есть ошибки.
+"""
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# Свойства управляемой формы: их нельзя использовать как имена переменных в модуле формы.
+FORM_PROPERTIES = """
+Заголовок Элементы Команды Параметры Окно Модифицированность ТолькоПросмотр ИмяФормы
+КлючНазначенияИспользования ВладелецФормы ЗакрыватьПриВыборе ЗакрыватьПриЗакрытииВладельца
+РежимОткрытияОкна УникальныйИдентификатор ТекущийЭлемент КоманднаяПанель Автозаголовок
+Ширина Высота Группировка ПоложениеКоманднойПанели КартинкаЗаголовка РазрешитьИзменятьФорму
+СохранятьДанныеВНастройках ПроверятьЗаполнениеАвтоматически КлючСохраненияПоложенияОкна
+ЭтаФорма ЭтотОбъект
+""".split()
+# Свойства, которые модуль формы законно меняет (Заголовок = "...").
+WRITABLE_FORM_PROPERTIES = {"ТекущийЭлемент", "Заголовок", "Модифицированность", "ТолькоПросмотр",
+                            "Автозаголовок", "Ширина", "Высота", "Группировка", "РежимОткрытияОкна",
+                            "ЗакрыватьПриВыборе", "ЗакрыватьПриЗакрытииВладельца", "ВладелецФормы",
+                            "КлючНазначенияИспользования", "ПоложениеКоманднойПанели", "КартинкаЗаголовка"}
+
+# Глобальный контекст: присваивание переменной с таким именем падает при выполнении.
+GLOBAL_CONTEXT = """
+Документы Справочники РегистрыСведений РегистрыНакопления РегистрыБухгалтерии РегистрыРасчета
+Константы Перечисления Обработки Отчеты ПланыСчетов ПланыВидовХарактеристик ПланыВидовРасчета
+БизнесПроцессы Задачи ПланыОбмена ЖурналыДокументов Последовательности ВнешниеОбработки
+ВнешниеОтчеты ПользователиИнформационнойБазы ПараметрыСеанса Метаданные РабочаяДата
+ХранилищеОбщихНастроек ХранилищеСистемныхНастроек ХранилищеНастроекДанныхФорм
+ХранилищеВариантовОтчетов ХранилищеПользовательскихНастроекОтчетов БиблиотекаКартинок
+БиблиотекаСтилей ЦветаСтиля ШрифтыСтиля РамкиСтиля Символы ГлавныйИнтерфейс ГлавныйСтиль
+ПланыВидовХарактеристик КритерииОтбора РегламентныеЗадания ФоновыеЗадания ПолнотекстовыйПоиск
+ФункциональныеОпции ПараметрыФункциональныхОпций ЭлектронныеПодписи
+""".split()
+
+BAD_PROPERTIES = {
+    "ВысотаВСтроках": "у элементов формы нет свойства ВысотаВСтроках, есть Высота",
+    "ВысотаВСтрокахТаблицы": "у таблицы формы свойство называется ВысотаВСтрокахТаблицы только в табличном поле — проверьте",
+}
+
+PAIRS = [
+    (r"Процедура", r"КонецПроцедуры"),
+    (r"Функция", r"КонецФункции"),
+    (r"Если", r"КонецЕсли"),
+    (r"Попытка", r"КонецПопытки"),
+]
+
+KEYWORDS = set("""
+Если Тогда ИначеЕсли Иначе КонецЕсли Для Каждого Из По Пока Цикл КонецЦикла Процедура Функция
+КонецПроцедуры КонецФункции Возврат Продолжить Прервать Попытка Исключение КонецПопытки ВызватьИсключение
+Новый Знач Экспорт Перем И Или Не Истина Ложь Неопределено NULL Выполнить Ждать Асинх Перейти
+ДобавитьОбработчик УдалитьОбработчик
+""".split())
+
+
+def strip_strings_and_comments(line: str) -> str:
+    """Убирает комментарии и содержимое строковых литералов, сохраняя кавычки."""
+    out = []
+    in_str = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if in_str:
+            if ch == '"':
+                if i + 1 < len(line) and line[i + 1] == '"':
+                    i += 2
+                    continue
+                in_str = False
+                out.append('"')
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append('"')
+        elif line.startswith("//", i):
+            break
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def clean_lines(text: str):
+    """Строки модуля без комментариев и текста литералов (многострочные литералы с |)."""
+    result = []
+    in_multiline = False
+    for raw in text.splitlines():
+        line = raw
+        if in_multiline:
+            stripped = line.lstrip()
+            if stripped.startswith("|"):
+                # продолжение многострочного литерала: ищем закрывающую кавычку
+                body = stripped[1:]
+                closed = False
+                j = 0
+                while j < len(body):
+                    if body[j] == '"':
+                        if j + 1 < len(body) and body[j + 1] == '"':
+                            j += 2
+                            continue
+                        closed = True
+                        break
+                    j += 1
+                if closed:
+                    in_multiline = False
+                    line = '"' + body[j:]
+                else:
+                    result.append("")
+                    continue
+            else:
+                in_multiline = False
+        cleaned = strip_strings_and_comments(line)
+        if cleaned.count('"') % 2 == 1:
+            in_multiline = True
+        result.append(cleaned)
+    return result
+
+
+def check_file(path: Path):
+    text = path.read_text(encoding="utf-8-sig")
+    lines = clean_lines(text)
+    is_form = "Forms" in path.parts
+    problems = []
+
+    def add(n, msg):
+        problems.append(f"{path.relative_to(ROOT)}:{n}: {msg}")
+
+    # объявленные методы
+    declared = {}
+    for n, line in enumerate(lines, 1):
+        m = re.match(r"\s*(?:Асинх\s+)?(Процедура|Функция)\s+([\wА-Яа-яЁё]+)\s*\(([^)]*)\)?", line)
+        if m:
+            name = m.group(2)
+            if name in declared:
+                add(n, f"метод {name} уже объявлен в строке {declared[name]}")
+            declared[name] = n
+            params = m.group(3) or ""
+            for p in params.split(","):
+                p = re.sub(r"^\s*Знач\s+", "", p).split("=")[0].strip()
+                if p in GLOBAL_CONTEXT:
+                    add(n, f"параметр «{p}» совпадает с именем глобального контекста")
+
+    # баланс блоков
+    depth_stack = []
+    region_stack = []
+    for n, line in enumerate(lines, 1):
+        s = line.strip()
+        if re.match(r"#Область\b", s):
+            region_stack.append(n)
+        elif re.match(r"#КонецОбласти\b", s):
+            if not region_stack:
+                add(n, "#КонецОбласти без #Область")
+            else:
+                region_stack.pop()
+        if s.startswith("#") or s.startswith("&"):
+            continue
+        for word in re.findall(r"[\wА-Яа-яЁё]+", s):
+            for opener, closer in PAIRS:
+                if word == opener:
+                    depth_stack.append((opener, n))
+                elif word == closer:
+                    if not depth_stack or depth_stack[-1][0] != opener:
+                        add(n, f"{closer} без {opener}" + (
+                            f" (открыт {depth_stack[-1][0]} в строке {depth_stack[-1][1]})" if depth_stack else ""))
+                    else:
+                        depth_stack.pop()
+            if word == "Цикл":
+                depth_stack.append(("Цикл", n))
+            elif word == "КонецЦикла":
+                if not depth_stack or depth_stack[-1][0] != "Цикл":
+                    add(n, "КонецЦикла без Цикл")
+                else:
+                    depth_stack.pop()
+    for opener, n in depth_stack:
+        add(n, f"{opener} не закрыт")
+    for n in region_stack:
+        add(n, "#Область не закрыта")
+
+    for n, line in enumerate(lines, 1):
+        # присваивание переменной с запрещённым именем
+        m = re.match(r"\s*([\wА-Яа-яЁё]+)\s*=(?!=)", line)
+        names = []
+        if m:
+            names.append(m.group(1))
+        m = re.match(r"\s*Для\s+Каждого\s+([\wА-Яа-яЁё]+)\s+Из\b", line)
+        if m:
+            names.append(m.group(1))
+        m = re.match(r"\s*Для\s+([\wА-Яа-яЁё]+)\s*=", line)
+        if m:
+            names.append(m.group(1))
+        m = re.match(r"\s*Перем\s+(.+);", line)
+        if m:
+            names += [x.strip() for x in m.group(1).split(",")]
+        for name in names:
+            if name in ("Если", "Для", "Каждого", "Пока"):
+                continue
+            if is_form and name in FORM_PROPERTIES and name not in WRITABLE_FORM_PROPERTIES:
+                add(n, f"переменная «{name}» совпадает со свойством формы (переименуйте)")
+            if name in GLOBAL_CONTEXT:
+                add(n, f"переменная «{name}» совпадает с именем глобального контекста (переименуйте)")
+
+        for prop, why in BAD_PROPERTIES.items():
+            if re.search(r"\." + prop + r"\b", line):
+                add(n, why)
+
+        for m in re.finditer(r"\bНовый\s+[\wА-Яа-яЁё]+\s*\(", line):
+            depth, j = 0, m.end() - 1
+            while j < len(line):
+                if line[j] == "(":
+                    depth += 1
+                elif line[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if depth == 0 and re.match(r"\s*\.\s*[\wА-Яа-яЁё]+", line[j + 1:]):
+                add(n, "вызов метода прямо у «Новый ...()» — сначала присвойте объект переменной")
+
+    # вызовы несуществующих процедур этого модуля: только для имён, похожих на локальные
+    # (с суффиксами НаСервере/НаКлиенте/Завершение или начинающихся с глагола, объявленного рядом)
+    for n, line in enumerate(lines, 1):
+        for m in re.finditer(r"(?<![.\wА-Яа-яЁё])([\wА-Яа-яЁё]+(?:НаСервере|НаКлиенте|Завершение))\s*\(", line):
+            name = m.group(1)
+            if name not in declared and name not in KEYWORDS:
+                add(n, f"вызывается {name}(), но такого метода в модуле нет")
+
+    return problems
+
+
+def main(argv):
+    targets = [Path(a) for a in argv] or [ROOT]
+    files = []
+    for t in targets:
+        t = t.resolve()
+        files += sorted(t.rglob("*.bsl")) if t.is_dir() else [t]
+    problems = []
+    for f in files:
+        problems += check_file(f)
+    for p in problems:
+        print(p)
+    print(f"Проверено модулей: {len(files)}, замечаний: {len(problems)}")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
