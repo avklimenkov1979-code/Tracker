@@ -50,6 +50,8 @@ def _cp866(self):
 
 
 def main() -> int:
+    # скрипт распознавания договоров встраивается в модуль «Ежедневного отчёта»
+    subprocess.run([sys.executable, str(HERE / "embed_ps.py")], check=True)
     check = subprocess.run([sys.executable, str(HERE / "check_bsl.py")], capture_output=True, text=True)
     print(check.stdout.strip())
     if check.returncode != 0:
