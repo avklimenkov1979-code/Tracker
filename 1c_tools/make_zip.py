@@ -50,6 +50,12 @@ def _cp866(self):
 
 
 def main() -> int:
+    # движок «Отчёта руководителю» в модуле объекта — копия серверной части формы (для отправки на почту)
+    gen = subprocess.run([sys.executable, str(ROOT / "production" / "1c" / "gen_engine.py")], capture_output=True, text=True)
+    print(gen.stdout.strip())
+    if gen.returncode != 0:
+        print("Архив не собран: движок отчёта не сгенерирован.")
+        return 1
     check = subprocess.run([sys.executable, str(HERE / "check_bsl.py")], capture_output=True, text=True)
     print(check.stdout.strip())
     if check.returncode != 0:
