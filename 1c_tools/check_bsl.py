@@ -208,6 +208,42 @@ def check_file(path: Path):
                 if p in GLOBAL_CONTEXT:
                     add(n, f"параметр «{p}» совпадает с именем глобального контекста")
 
+    # число аргументов при вызове методов этого модуля (вызов на одной строке)
+    arity = {}
+    for n, line in enumerate(lines, 1):
+        m = re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s+([\wА-Яа-яЁё]+)\s*\(([^)]*)\)", line)
+        if m:
+            prms = [x for x in m.group(2).split(",") if x.strip()]
+            required = sum(1 for x in prms if "=" not in x)
+            arity[m.group(1)] = (required, len(prms))
+    for n, line in enumerate(lines, 1):
+        if re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s", line):
+            continue
+        for m in re.finditer(r"(?<![\wА-Яа-яЁё.])([\wА-Яа-яЁё]+)\s*\(", line):
+            name = m.group(1)
+            if name not in arity:
+                continue
+            depth, i, args, empty = 1, m.end(), 1, True
+            while i < len(line) and depth:
+                ch = line[i]
+                if ch in "([":
+                    depth += 1
+                elif ch in ")]":
+                    depth -= 1
+                elif ch == "," and depth == 1:
+                    args += 1
+                elif not ch.isspace() and depth >= 1:
+                    empty = False
+                i += 1
+            if depth:
+                continue  # вызов продолжается на следующей строке
+            count = 0 if empty and args == 1 else args
+            lo, hi = arity[name]
+            if count > hi:
+                add(n, f"{name}(): передано {count} арг., а у метода {hi} параметр(ов)")
+            elif count < lo and "," not in line[m.end():i] and count == 0:
+                add(n, f"{name}(): не переданы обязательные параметры ({lo})")
+
     # служебные слова встроенного языка нельзя использовать как имена параметров и переменных
     for n, line in enumerate(lines, 1):
         m = re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s+[\wА-Яа-яЁё]+\s*\(([^)]*)\)", line)

@@ -19,7 +19,7 @@
 					<v8:content>Ежедневный отчёт</v8:content>
 				</v8:item>
 			</Synonym>
-			<Comment>Ежедневный отчёт: деньги, долги, продажи, прибыль, заказы, выпуск, сырьё, неоплаченные счета</Comment>
+			<Comment>Ежедневный отчёт: деньги, долги, продажи, прибыль, заказы, выпуск, сырьё, аренда</Comment>
 			<DefaultForm>ExternalDataProcessor.ОтчетРуководителю.Form.Форма</DefaultForm>
 			<AuxiliaryForm/>
 		</Properties>
