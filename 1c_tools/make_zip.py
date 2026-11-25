@@ -37,6 +37,9 @@ README = """ОБРАБОТКИ 1С: ОТЧЁТ РУКОВОДИТЕЛЮ, НАК�
 1. Сохраните архив из письма в «Загрузки» (распаковывать и переименовывать не нужно).
 2. Щёлкните ярлык «Обновить обработки 1С» на рабочем столе.
 
+ЧТОБЫ ОБРАБОТКИ БЫЛИ В 1С НАВСЕГДА (в меню разделов, у всех пользователей,
+с расписанием) - см. ПОДКЛЮЧИТЬ_НАВСЕГДА.txt.
+
 Если что-то не получилось - на рабочем столе появится файл Ошибка_обновления_1С_....txt,
 пришлите его в чат. Ошибку внутри обработки присылайте кнопкой «Сообщить об ошибке».
 """
@@ -60,6 +63,8 @@ def main() -> int:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(zipfile.ZipInfo(f"{TOP}/ПРОЧТИ_МЕНЯ.txt", stamp), "﻿" + README.replace("\n", "\r\n"))
         z.write(HERE / "ОБНОВИТЬ.bat", f"{TOP}/ОБНОВИТЬ.txt")
+        z.writestr(zipfile.ZipInfo(f"{TOP}/ПОДКЛЮЧИТЬ_НАВСЕГДА.txt", stamp),
+                   "\ufeff" + (HERE / "ПОДКЛЮЧИТЬ_НАВСЕГДА.txt").read_text(encoding="utf-8").replace("\n", "\r\n"))
         for src, name in PROJECTS:
             for path in sorted(src.rglob("*")):
                 if path.is_dir() or path.suffix in (".zip", ".epf", ".py") or "__pycache__" in path.parts:
