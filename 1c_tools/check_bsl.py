@@ -244,6 +244,32 @@ def check_file(path: Path):
             elif count < lo and "," not in line[m.end():i] and count == 0:
                 add(n, f"{name}(): не переданы обязательные параметры ({lo})")
 
+    # Свернуть() оставляет только перечисленные колонки: колонка, добавленная до свёртки и не перечисленная,
+    # пропадает, и обращение к ней потом даёт «Поле объекта не обнаружено»
+    starts = [i for i, l in enumerate(lines) if re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s", l)] + [len(lines)]
+    for k in range(len(starts) - 1):
+        body = range(starts[k], starts[k + 1])
+        added = {}
+        for i in body:
+            raw = text.splitlines()[i] if i < len(text.splitlines()) else ""
+            m = re.search(r"([\wА-Яа-яЁё]+)\.Колонки\.Добавить\(\s*\"([\wА-Яа-яЁё]+)\"", raw)
+            if m:
+                added.setdefault(m.group(1), {})[m.group(2)] = i
+            m = re.search(r"([\wА-Яа-яЁё]+)\.Свернуть\(\s*\"([^\"]*)\"\s*(?:,\s*\"([^\"]*)\")?", raw)
+            if m and m.group(1) in added:
+                kept = {c.strip() for c in (m.group(2) + "," + (m.group(3) or "")).split(",") if c.strip()}
+                for col, at in list(added[m.group(1)].items()):
+                    if col in kept:
+                        continue
+                    for j in range(i + 1, starts[k + 1]):
+                        later = lines[j]
+                        if re.search(r"\.Колонки\.Добавить\(\s*\"" + col + r"\"", text.splitlines()[j]):
+                            break
+                        if re.search(r"\." + col + r"(?![\wА-Яа-яЁё])", later):
+                            add(i + 1, f"{m.group(1)}.Свернуть() выбросит колонку «{col}» (добавлена в строке {at + 1}), а она используется в строке {j + 1}")
+                            break
+                    del added[m.group(1)][col]
+
     # служебные слова встроенного языка нельзя использовать как имена параметров и переменных
     for n, line in enumerate(lines, 1):
         m = re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s+[\wА-Яа-яЁё]+\s*\(([^)]*)\)", line)
