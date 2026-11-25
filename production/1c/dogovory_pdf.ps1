@@ -1,4 +1,4 @@
-param([string]$Dir)
+param([string]$Dir, [int]$MaxPages = 10, [int]$MaxSeconds = 180)
 # Распознавание договоров аренды в PDF без интернета: Windows сам рисует страницы PDF
 # (Windows.Data.Pdf) и распознаёт текст (Windows.Media.Ocr). Работает и для PDF из Word, и для сканов.
 # Для каждого файла *.pdf в папке пишет рядом *.pdf.txt (текст) и *.pdf.json (найденные показатели).
@@ -132,8 +132,10 @@ foreach ($pdf in Get-ChildItem -LiteralPath $Dir -Filter '*.pdf') {
         $sf = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($pdf.FullName)) ([Windows.Storage.StorageFile])
         $doc = Await ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($sf)) ([Windows.Data.Pdf.PdfDocument])
         $sb = New-Object System.Text.StringBuilder
-        $pages = [Math]::Min([int]$doc.PageCount, 40)
+        $pages = [Math]::Min([int]$doc.PageCount, $MaxPages)
+        $watch = [Diagnostics.Stopwatch]::StartNew()
         for ($i = 0; $i -lt $pages; $i++) {
+            if ($watch.Elapsed.TotalSeconds -gt $MaxSeconds) { $res['Обрезано'] = 'распознано ' + $i + ' стр. за отведённое время'; break }
             $page = $doc.GetPage([uint32]$i)
             $scale = [Math]::Min(2400.0 / [Math]::Max(1.0, $page.Size.Width), 3400.0 / [Math]::Max(1.0, $page.Size.Height))
             $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
@@ -152,7 +154,9 @@ foreach ($pdf in Get-ChildItem -LiteralPath $Dir -Filter '*.pdf') {
         }
         $text = $sb.ToString()
         [IO.File]::WriteAllText($pdf.FullName + '.txt', $text, [Text.Encoding]::UTF8)
+        $cut = $res['Обрезано']
         $res = Find $text
+        if ($cut) { $res['Обрезано'] = $cut }
         $res['Страниц'] = [int]$doc.PageCount
         $res['Символов'] = $text.Length
     } catch {
