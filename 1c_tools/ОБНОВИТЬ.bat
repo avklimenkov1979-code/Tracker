@@ -41,6 +41,20 @@ function Say($text, $color = 'Gray') { Write-Host "  $text" -ForegroundColor $co
 function Ok($text)   { Say $text 'Green' }
 function Warn($text) { Say $text 'Yellow' }
 function Fail($text) { Say "[X] $text" 'Red' }
+# В файлы для чата не попадают имя пользователя Windows, компьютер, путь к профилю, адрес базы и длинные номера
+function Mask-Private([string]$t) {
+    if (-not $t) { return $t }
+    foreach ($v in @($env:USERPROFILE, $env:USERNAME, $env:COMPUTERNAME, $env:USERDOMAIN, $env:LOGONSERVER)) {
+        if ($v -and $v.Trim('\').Length -ge 3) { $t = $t.Replace($v.Trim('\'), '[скрыто]') }
+    }
+    if ($settings -and $settings['Base']) {
+        foreach ($part in ($settings['Base'] -split ';')) {
+            $val = ($part -split '=', 2)[1]
+            if ($val) { $val = $val.Trim().Trim('"'); if ($val.Length -ge 3) { $t = $t.Replace($val, '[база]') } }
+        }
+    }
+    return [regex]::Replace($t, '\d{9,}', { param($m) '*' * $m.Value.Length })
+}
 
 function Finish($code) {
     Write-Host ''
@@ -300,6 +314,7 @@ try {
             $lines = @("ОШИБКА СБОРКИ: $title", "Архив: $($src.FullName)", "1С: $($v8.Version)",
                        "Способ: " + $(if ($settings['Mode'] -eq 'base') { 'через рабочую базу' } else { 'временная база' }),
                        "Компьютер: $([Environment]::OSVersion.VersionString)", '', 'СООБЩЕНИЕ 1С:', $logText)
+            $lines = @($lines | ForEach-Object { Mask-Private ([string]$_) })
             [IO.File]::WriteAllLines($report, [string[]]$lines, (New-Object Text.UTF8Encoding $true))
             Warn "Пришлите в чат файл с рабочего стола: $(Split-Path $report -Leaf)"
             if ($logText -match 'прав|Конфигуратор|rights') {
