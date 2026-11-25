@@ -16,10 +16,10 @@
 			<Synonym>
 				<v8:item>
 					<v8:lang>ru</v8:lang>
-					<v8:content>Отчёт руководителю</v8:content>
+					<v8:content>Ежедневный отчёт</v8:content>
 				</v8:item>
 			</Synonym>
-			<Comment>Ежедневный отчёт руководителю: деньги, долги, заказы, выпуск, нехватка сырья</Comment>
+			<Comment>Ежедневный отчёт: деньги, долги, продажи, прибыль, заказы, выпуск, сырьё, неоплаченные счета</Comment>
 			<DefaultForm>ExternalDataProcessor.ОтчетРуководителю.Form.Форма</DefaultForm>
 			<AuxiliaryForm/>
 		</Properties>
