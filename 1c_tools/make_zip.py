@@ -45,6 +45,11 @@ README = """ОБРАБОТКИ 1С: ЕЖЕДНЕВНЫЙ ОТЧЁТ, НАКЛА�
 """
 
 
+# Gmail не пропускает исполняемые файлы даже внутри архива — такие в архив не кладём
+# (скрипт распознавания договоров .ps1 уже встроен в модуль обработки).
+SKIP = (".zip", ".epf", ".py", ".ps1", ".bat", ".cmd", ".exe", ".js", ".vbs", ".jar", ".msi", ".com", ".scr")
+
+
 def _cp866(self):
     return self.filename.encode("cp866"), self.flag_bits & ~0x800
 
@@ -69,7 +74,9 @@ def main() -> int:
                    "\ufeff" + (HERE / "ПОДКЛЮЧИТЬ_НАВСЕГДА.txt").read_text(encoding="utf-8").replace("\n", "\r\n"))
         for src, name in PROJECTS:
             for path in sorted(src.rglob("*")):
-                if path.is_dir() or path.suffix in (".zip", ".epf", ".py") or "__pycache__" in path.parts:
+                if path.is_dir() or "__pycache__" in path.parts:
+                    continue
+                if path.suffix.lower() in SKIP and path.name != "СОБРАТЬ.bat":
                     continue
                 rel = path.relative_to(src).as_posix()
                 if rel == "СОБРАТЬ.bat":
@@ -80,6 +87,10 @@ def main() -> int:
         names = z.namelist()
     if bad:
         print("повреждён файл в архиве:", bad)
+        return 1
+    blocked = [n for n in names if n.lower().endswith(SKIP)]
+    if blocked:
+        print("в архиве файлы, которые не пропустит почта:", blocked)
         return 1
     print(out)
     for n in names:
