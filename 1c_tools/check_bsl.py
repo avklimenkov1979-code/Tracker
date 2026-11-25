@@ -270,6 +270,31 @@ def check_file(path: Path):
                             break
                     del added[m.group(1)][col]
 
+    # метод «&НаСервереБезКонтекста» не может вызывать методы модуля «&НаСервере» и «&НаКлиенте»
+    if is_form:
+        directive_of, owner_ranges = {}, []
+        cur = None
+        for i, l in enumerate(lines):
+            d = re.match(r"\s*&(НаСервереБезКонтекста|НаСервере|НаКлиентеНаСервереБезКонтекста|НаКлиенте)\b", l)
+            if d:
+                cur = d.group(1)
+                continue
+            m = re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s+([\wА-Яа-яЁё]+)", l)
+            if m:
+                directive_of[m.group(1)] = cur
+                owner_ranges.append((i, m.group(1), cur))
+                cur = None
+        owner_ranges.append((len(lines), None, None))
+        for k in range(len(owner_ranges) - 1):
+            start, name, d = owner_ranges[k]
+            if d not in ("НаСервереБезКонтекста", "НаКлиентеНаСервереБезКонтекста"):
+                continue
+            for j in range(start + 1, owner_ranges[k + 1][0]):
+                for m in re.finditer(r"(?<![\wА-Яа-яЁё.])([\wА-Яа-яЁё]+)\s*\(", lines[j]):
+                    callee = m.group(1)
+                    if directive_of.get(callee) in ("НаСервере", "НаКлиенте"):
+                        add(j + 1, f"{name}() — без контекста формы, а вызывает {callee}() с директивой &{directive_of[callee]}")
+
     # переменная с именем встроенной функции перекрывает её: дальше «Тип("...")» вызовет ошибку
     BUILTIN_FUNCS = {"Тип", "ТипЗнч", "Формат", "Строка", "Число", "Дата", "Мин", "Макс", "Окр", "Цел", "Лев", "Прав", "Сред", "СтрНайти", "НРег", "ВРег"}
     for n, line in enumerate(lines, 1):
