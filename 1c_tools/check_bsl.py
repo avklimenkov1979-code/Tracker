@@ -75,6 +75,13 @@ NO_FORM_CONTEXT = {
     r"РеквизитФормыВЗначение\s*\(": "в &НаСервереБезКонтекста нет формы",
 }
 
+LANG_KEYWORDS = set("""ЕСЛИ ТОГДА ИНАЧЕЕСЛИ ИНАЧЕ КОНЕЦЕСЛИ ДЛЯ КАЖДОГО ИЗ ПО ЦИКЛ КОНЕЦЦИКЛА ПОКА ПРОЦЕДУРА ФУНКЦИЯ
+КОНЕЦПРОЦЕДУРЫ КОНЕЦФУНКЦИИ ВОЗВРАТ ПРОДОЛЖИТЬ ПРЕРВАТЬ И ИЛИ НЕ ПОПЫТКА ИСКЛЮЧЕНИЕ ВЫЗВАТЬИСКЛЮЧЕНИЕ
+КОНЕЦПОПЫТКИ НОВЫЙ ВЫПОЛНИТЬ ПЕРЕЙТИ ЗНАЧ ЭКСПОРТ ПЕРЕМ ИСТИНА ЛОЖЬ НЕОПРЕДЕЛЕНО NULL ДОБАВИТЬОБРАБОТЧИК
+УДАЛИТЬОБРАБОТЧИК АСИНХ ЖДАТЬ IF THEN ELSIF ELSE ENDIF FOR EACH IN TO DO ENDDO WHILE PROCEDURE FUNCTION
+ENDPROCEDURE ENDFUNCTION RETURN CONTINUE BREAK AND OR NOT TRY EXCEPT RAISE ENDTRY NEW EXECUTE GOTO VAL EXPORT
+VAR TRUE FALSE UNDEFINED ASYNC AWAIT""".split())
+
 QUERY_KEYWORDS = set("""В И ИЛИ НЕ ИЗ ПО ГДЕ КАК ДЛЯ ВСЕ ЕСТЬ ТОГДА ИНАЧЕ КОГДА КОНЕЦ МЕЖДУ ПОДОБНО ВЫБОР ВЫБРАТЬ
 ОБЪЕДИНИТЬ ИМЕЮЩИЕ ИТОГИ ПЕРВЫЕ РАЗЛИЧНЫЕ УПОРЯДОЧИТЬ СГРУППИРОВАТЬ СОЕДИНЕНИЕ ЛЕВОЕ ПРАВОЕ ПОЛНОЕ ВНУТРЕННЕЕ
 ИЕРАРХИИ ВОЗР УБЫВ ПОМЕСТИТЬ УНИЧТОЖИТЬ ИНДЕКСИРОВАТЬ ВЫРАЗИТЬ NULL ИСТИНА ЛОЖЬ НЕОПРЕДЕЛЕНО
@@ -200,6 +207,21 @@ def check_file(path: Path):
                 p = re.sub(r"^\s*Знач\s+", "", p).split("=")[0].strip()
                 if p in GLOBAL_CONTEXT:
                     add(n, f"параметр «{p}» совпадает с именем глобального контекста")
+
+    # служебные слова встроенного языка нельзя использовать как имена параметров и переменных
+    for n, line in enumerate(lines, 1):
+        m = re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s+[\wА-Яа-яЁё]+\s*\(([^)]*)\)", line)
+        if m:
+            for prm in m.group(1).split(","):
+                name = re.sub(r"^\s*Знач\s+", "", prm).split("=")[0].strip()
+                if name and name.upper() in LANG_KEYWORDS:
+                    add(n, f"параметр «{name}» — служебное слово языка 1С: «Ожидается имя формального параметра»")
+        m = re.match(r"\s*([\wА-Яа-яЁё]+)\s*=(?!=)", line)
+        if m and m.group(1).upper() in LANG_KEYWORDS:
+            add(n, f"переменная «{m.group(1)}» — служебное слово языка 1С")
+        m = re.match(r"\s*Для\s+Каждого\s+([\wА-Яа-яЁё]+)\s+Из", line)
+        if m and m.group(1).upper() in LANG_KEYWORDS:
+            add(n, f"переменная цикла «{m.group(1)}» — служебное слово языка 1С")
 
     # вызовы функций, которых нет в языке 1С
     for n, line in enumerate(lines, 1):
