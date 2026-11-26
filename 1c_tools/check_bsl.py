@@ -11,6 +11,7 @@
   * непарные Процедура/КонецПроцедуры, Если/КонецЕсли, Цикл/КонецЦикла,
     Попытка/КонецПопытки, #Область/#КонецОбласти;
   * вызов процедуры этого модуля, которой в модуле нет (опечатка в имени);
+  * два операнда подряд без оператора («А > 0 Изм Б» — опечатка вместо И/ИЛИ);
   * повторное объявление процедуры или функции.
 
   python3 1c_tools/check_bsl.py [папка или файлы ...]
@@ -488,7 +489,36 @@ def check_file(path: Path):
             if name not in declared and name not in KEYWORDS:
                 add(n, f"вызывается {name}(), но такого метода в модуле нет")
 
+    # два операнда подряд без оператора: «А > 0 Изм Б» (опечатка в И/ИЛИ, неудачная автозамена) —
+    # 1С не компилирует модуль: «Ожидается ключевое слово 'Цикл'/'Тогда'» или «Ожидается символ ';'»
+    def is_ident(t):
+        return re.fullmatch(r"[A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё]*", t) is not None
+
+    def is_operand(t, after):
+        if t.startswith('"') or t[0].isdigit():
+            return True
+        if t in ((")", "]") if after else ("(",)):
+            return True
+        return is_ident(t) and (t.upper() not in LANG_KEYWORDS or t.upper() in OPERAND_KEYWORDS)
+
+    tok_re = re.compile(r'"[^"]*"?|\d+(?:\.\d+)?|[\wА-Яа-яЁё]+|\S')
+    for n, line in enumerate(lines, 1):
+        st = line.strip()
+        if not st or st.startswith(("#", "&", "|", "~")):
+            continue
+        toks = tok_re.findall(st)
+        for k in range(1, len(toks) - 1):
+            w = toks[k]
+            if not is_ident(w) or w.upper() in LANG_KEYWORDS:
+                continue
+            if is_operand(toks[k - 1], True) and is_operand(toks[k + 1], False):
+                add(n, f"«{toks[k - 1]} {w} {toks[k + 1]}»: между операндами нет оператора — опечатка вместо И/ИЛИ?")
+                break
+
     return problems
+
+
+OPERAND_KEYWORDS = {"ИСТИНА", "ЛОЖЬ", "НЕОПРЕДЕЛЕНО", "NULL", "TRUE", "FALSE", "UNDEFINED"}
 
 
 def main(argv):
