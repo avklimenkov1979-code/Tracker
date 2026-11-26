@@ -15,6 +15,7 @@ TARGETS = [
     (ROOT / "1c_service/src/СервисУчета/Forms/Форма/Ext/Form/Module.bsl", "form"),
     (ROOT / "production/1c/src/ОтчетРуководителю/Forms/Форма/Ext/Form/Module.bsl", "form"),
     (ROOT / "1c_invoice_photo/src/ЗагрузкаНакладнойПоФото/Forms/Форма/Ext/Form/Module.bsl", "form"),
+    (ROOT / "1c_salary_analysis/src/АнализЗарплатыСотрудников/Ext/ObjectModule.bsl", "object"),
 ]
 BLOCK_RE = re.compile(r"\n#Область ОбезличиваниеДляЧата\n.*?\n#КонецОбласти\n", re.S)
 
