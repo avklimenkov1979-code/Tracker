@@ -1,4 +1,10 @@
 __pycache__/
 .pytest_cache/
-1c_salary_analysis/build.log
+production/data/
+production/**/reports/
+production/1c/*.zip
+production/1c/*.epf
+Nakladnaya_po_foto.zip
 *.epf
+1c_tools/*.zip
+1c_salary_analysis/build.log
