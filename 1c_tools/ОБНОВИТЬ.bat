@@ -24,8 +24,13 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $HomeDir   = Join-Path $env:LOCALAPPDATA 'Obrabotki1C'
 $Desktop   = [Environment]::GetFolderPath('Desktop')
-# готовые обработки (.epf) - в папку «Obrabotki_1C» на рабочем столе
+# готовые обработки (.epf) - в папку «Obrabotki_1C» на рабочем столе. Рабочий стол бывает на сервере (\\fs\...),
+# в профиле или в OneDrive: берём тот, где папка «Obrabotki_1C» уже есть, иначе - рабочий стол Windows.
 $EpfDir    = Join-Path $Desktop 'Obrabotki_1C'
+foreach ($cand in @($Desktop, (Join-Path $env:USERPROFILE 'Desktop'), (Join-Path $env:USERPROFILE 'Рабочий стол'),
+                    $(if ($env:OneDrive) { Join-Path $env:OneDrive 'Desktop' }), $(if ($env:OneDrive) { Join-Path $env:OneDrive 'Рабочий стол' }))) {
+    if ($cand -and (Test-Path (Join-Path $cand 'Obrabotki_1C'))) { $EpfDir = Join-Path $cand 'Obrabotki_1C'; break }
+}
 $Installed = Join-Path $HomeDir 'ОБНОВИТЬ.bat'
 $SettingsFile = Join-Path $HomeDir 'nastroyki.txt'
 $Work      = Join-Path $env:TEMP 'obrabotki1c_build'
@@ -365,6 +370,7 @@ try {
         Ok '  «Обновить обработки 1С» - когда придёт новый архив.'
         Say 'Если 1С уже открыта, ярлык откроет ещё одно окно 1С. Можно и по-старому: Файл - Открыть,'
         Say "файлы лежат в папке $EpfDir"
+        try { Start-Process explorer.exe $EpfDir } catch { }   # показать папку с новыми файлами
         Say 'Обработка, открытая до обновления, остаётся старой: закройте её и откройте ярлыком заново.'
     }
     if ($failed.Count -gt 0) { Fail ('Не обновлено: ' + ($failed -join ', ')) }
