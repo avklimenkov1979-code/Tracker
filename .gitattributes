@@ -1,0 +1,2 @@
+# cmd.exe читает UTF-8 .bat с LF неправильно — только CRLF
+*.bat text eol=crlf
