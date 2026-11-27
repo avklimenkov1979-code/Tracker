@@ -480,6 +480,36 @@ def check_file(path: Path):
         if kind == "Процедура" and re.match(r"\s*Возврат\s+[^;\s]", line):
             add(n, "«Возврат» со значением внутри процедуры")
 
+    # число + строка: «Счетчик + " поз."» — 1С пытается привести строку к числу и падает
+    # переменная числовая, если в этом методе ей присваивают только числа
+    numeric_by_line = {}
+    assigned, other, start = {}, set(), 0
+    def flush(end):
+        names = {k for k in assigned if k not in other}
+        for i in range(start, end + 1):
+            numeric_by_line[i] = names
+    for n, line in enumerate(lines, 1):
+        if re.match(r"\s*(?:Асинх\s+)?(?:Процедура|Функция)\s", line):
+            flush(n - 1)
+            assigned, other, start = {}, set(), n
+            pm = re.search(r"\(([^)]*)", line)
+            for prm in (pm.group(1).split(",") if pm else []):
+                other.add(re.sub(r"^\s*Знач\s+", "", prm).split("=")[0].strip())
+            continue
+        m = re.match(r"\s*([\wА-Яа-яЁё]+)\s*=\s*(.*?);?\s*$", line)
+        if m:
+            if re.fullmatch(r"(\d+(?:\.\d+)?|[\wА-Яа-яЁё.]+\.Количество\(\)|" + re.escape(m.group(1)) + r"\s*[+-]\s*\d+)", m.group(2).strip()):
+                assigned[m.group(1)] = n
+            else:
+                other.add(m.group(1))
+    flush(len(lines))
+    for n, line in enumerate(lines, 1):
+        numeric = numeric_by_line.get(n, set())
+        for m in re.finditer(r"(^|[(,=]|\bВозврат|\bИначе|\bТогда)\s*([\wА-Яа-яЁё]+(?:\.Количество\(\))?)\s*\+\s*\"", line):
+            name = m.group(2)
+            if name in numeric or name.endswith(".Количество()"):
+                add(n, f"число «{name}» складывается со строкой — 1С выдаст «Преобразование значения к типу Число»; оберните в Формат()")
+
     # вызовы несуществующих процедур этого модуля: только для имён, похожих на локальные
     # (с суффиксами НаСервере/НаКлиенте/Завершение или начинающихся с глагола, объявленного рядом)
     for n, line in enumerate(lines, 1):
