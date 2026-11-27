@@ -273,6 +273,21 @@ try {
     $newSelf = Get-ChildItem $unpacked -Recurse -File | Where-Object { $_.Name -in @('ОБНОВИТЬ.txt', 'ОБНОВИТЬ.bat') } | Select-Object -First 1
     $selfSource = if ($newSelf) { $newSelf.FullName } else { $env:OBN_SELF }
     if ($selfSource -ne $Installed) { Copy-Item $selfSource $Installed -Force }
+    # в архиве новая версия обновления - дальше работает она (старая могла класть файлы в другое место)
+    if ($newSelf -and -not $env:OBN_RELAUNCHED) {
+        $oldText = [IO.File]::ReadAllText($env:OBN_SELF, [Text.Encoding]::UTF8)
+        $newText = [IO.File]::ReadAllText($newSelf.FullName, [Text.Encoding]::UTF8)
+        if ($oldText -ne $newText) {
+            Say 'В архиве новая версия обновления - запускаю её.'
+            $env:OBN_RELAUNCHED = '1'
+            $env:OBN_SELF = $Installed
+            $env:OBN_ARG = $src.FullName
+            $t = [IO.File]::ReadAllText($Installed, [Text.Encoding]::UTF8)
+            $i = $t.IndexOf('#' + 'PS-START')
+            Invoke-Expression $t.Substring($i)
+            exit
+        }
+    }
 
     Choose-Base $settings
     Save-Settings $settings
