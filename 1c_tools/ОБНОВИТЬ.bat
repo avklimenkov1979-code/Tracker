@@ -9,7 +9,8 @@ rem    "Обновить обработки 1С", "Ежедневный отчё
 rem    "Сервис учёта", "ГОЗ затраты ПП 874", "Анализ зарплаты".
 rem  Дальше: сохраните архив из письма в "Загрузки" и щёлкните ярлык
 rem  "Обновить обработки 1С" - он сам найдёт свежий архив, распакует,
-rem  соберёт .epf и обновит ярлыки. Архив можно и перетащить на ярлык.
+rem  соберёт .epf в папку Obrabotki_1C на рабочем столе и обновит ярлыки.
+rem  Архив можно и перетащить на ярлык.
 rem
 rem  Вся логика - в PowerShell ниже метки PS-START.
 rem ==================================================================
@@ -22,11 +23,12 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $HomeDir   = Join-Path $env:LOCALAPPDATA 'Obrabotki1C'
-$EpfDir    = Join-Path $HomeDir 'epf'
+$Desktop   = [Environment]::GetFolderPath('Desktop')
+# готовые обработки (.epf) - в папку «Obrabotki_1C» на рабочем столе
+$EpfDir    = Join-Path $Desktop 'Obrabotki_1C'
 $Installed = Join-Path $HomeDir 'ОБНОВИТЬ.bat'
 $SettingsFile = Join-Path $HomeDir 'nastroyki.txt'
 $Work      = Join-Path $env:TEMP 'obrabotki1c_build'
-$Desktop   = [Environment]::GetFolderPath('Desktop')
 
 # Что умеем собирать: имя описания в src\*.xml -> название и имя файла .epf
 $Products = @{
