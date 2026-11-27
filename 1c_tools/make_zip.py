@@ -55,6 +55,10 @@ def _cp866(self):
     return self.filename.encode("cp866"), self.flag_bits & ~0x800
 
 
+def crlf(path):
+    return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
 def main() -> int:
     # скрипт распознавания договоров встраивается в модуль «Ежедневного отчёта»
     subprocess.run([sys.executable, str(HERE / "embed_ps.py")], check=True)
@@ -70,7 +74,8 @@ def main() -> int:
     stamp = (2026, 11, 24, 12, 0, 0)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(zipfile.ZipInfo(f"{TOP}/ПРОЧТИ_МЕНЯ.txt", stamp), "﻿" + README.replace("\n", "\r\n"))
-        z.write(HERE / "ОБНОВИТЬ.bat", f"{TOP}/ОБНОВИТЬ.txt")
+        # .bat — только с переводами строк Windows (CRLF): с одним LF cmd выполняет его с ошибками и окно сразу закрывается
+        z.writestr(zipfile.ZipInfo(f"{TOP}/ОБНОВИТЬ.txt", stamp), crlf(HERE / "ОБНОВИТЬ.bat"))
         z.writestr(zipfile.ZipInfo(f"{TOP}/ПОДКЛЮЧИТЬ_НАВСЕГДА.txt", stamp),
                    "\ufeff" + (HERE / "ПОДКЛЮЧИТЬ_НАВСЕГДА.txt").read_text(encoding="utf-8").replace("\n", "\r\n"))
         for src, name in PROJECTS:
@@ -81,7 +86,8 @@ def main() -> int:
                     continue
                 rel = path.relative_to(src).as_posix()
                 if rel == "СОБРАТЬ.bat":
-                    rel = "СОБРАТЬ.txt"
+                    z.writestr(zipfile.ZipInfo(f"{TOP}/{name}/СОБРАТЬ.txt", stamp), crlf(path))
+                    continue
                 z.write(path, f"{TOP}/{name}/{rel}")
     with zipfile.ZipFile(out) as z:
         bad = z.testzip()
